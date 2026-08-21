@@ -17,6 +17,8 @@ pub struct WaylandGlobals {
     pub touch: Option<Handle<WlTouch>>,
     pub virtual_keyboard_manager: Option<Handle<ZwpVirtualKeyboardManagerV1>>,
     pub virtual_keyboard: Option<Handle<ZwpVirtualKeyboardV1>>,
+    pub input_method_manager: Option<Handle<ZwpInputMethodManagerV2>>,
+    pub input_method: Option<Handle<ZwpInputMethodV2>>,
 }
 
 pub struct WindowState {
@@ -77,6 +79,9 @@ fn on_registry(s: &mut MechanixKeyboardState, event: &WlRegistryEvent) {
         WlSeat::NAME => s.globals.seat = Some(sender.bind(*name, *version)),
         ZwpVirtualKeyboardManagerV1::NAME => {
             s.globals.virtual_keyboard_manager = Some(sender.bind(*name, *version))
+        }
+        ZwpInputMethodManagerV2::NAME => {
+            s.globals.input_method_manager = Some(sender.bind(*name, *version));
         }
         _ => {}
     }

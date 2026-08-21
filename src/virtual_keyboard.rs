@@ -4,7 +4,7 @@ use std::time::Instant;
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, ftruncate, memfd_create};
 use rustix::io;
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
-use wayland::{WlKeyboardKeyState, WlKeyboardKeymapFormat};
+use wayland::{WlKeyboardKeyState, WlKeyboardKeymapFormat, ZwpInputMethodV2Event};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{Context, Keymap};
 
@@ -34,7 +34,20 @@ pub struct VirtualKeyboardState {
 /// virtual-keyboard manager, create a virtual keyboard and hand the compositor
 /// a standard keymap.
 pub fn module<S>() -> impl app::RegisteredModule<MechanixKeyboardState, S> {
-    app::Module::new().on(on_pre_poll)
+    app::Module::new().on(on_pre_poll).on(on_input_method_event)
+}
+
+/// zwp_input_method_v2 Text input focus events
+fn on_input_method_event(_s: &mut MechanixKeyboardState, ev: &ZwpInputMethodV2Event) {
+    match ev {
+        ZwpInputMethodV2Event::Activate { .. } => {
+            tracing::info!("Activate requested!");
+        }
+        ZwpInputMethodV2Event::Deactivate { .. } => {
+            tracing::info!("Deactivate requested!");
+        }
+        _ => (),
+    }
 }
 
 /// The seat/manager are only known after the registry roundtrip, so create the
@@ -44,15 +57,17 @@ fn on_pre_poll(s: &mut MechanixKeyboardState, _: &app::PrePoll) {
         send_test_key(s);
         return;
     }
-    let (Some(seat), Some(manager)) = (
+    let (Some(seat), Some(vkbd_manager), Some(input_manager)) = (
         s.globals.seat.clone(),
         s.globals.virtual_keyboard_manager.clone(),
+        s.globals.input_method_manager.clone(),
     ) else {
-        tracing::warn!("No vkbd manager found!");
+        tracing::warn!("No managers found!");
         return;
     };
 
-    let vkbd = manager.create_virtual_keyboard(&seat);
+    let vkbd = vkbd_manager.create_virtual_keyboard(&seat);
+    let input_method = input_manager.get_input_method(&seat);
 
     // Compile a standard keymap from the default rules and serialise it.
     let ctx = Context::new(0);
@@ -75,6 +90,7 @@ fn on_pre_poll(s: &mut MechanixKeyboardState, _: &app::PrePoll) {
     );
 
     s.globals.virtual_keyboard = Some(vkbd);
+    s.globals.input_method = Some(input_method);
     s.virtual_keyboard_state.keymap = Some(keymap_fd);
     tracing::info!("sent keymap to virtual keyboard");
 }
