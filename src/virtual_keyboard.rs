@@ -46,6 +46,10 @@ fn on_input_method_event(_s: &mut MechanixKeyboardState, ev: &ZwpInputMethodV2Ev
         ZwpInputMethodV2Event::Deactivate { .. } => {
             tracing::info!("Deactivate requested!");
         }
+        ZwpInputMethodV2Event::ContentType { hint, purpose, .. } => {
+            tracing::info!("Hint: {:?}", hint);
+            tracing::info!("Purpose: {:?}", purpose);
+        }
         _ => (),
     }
 }
