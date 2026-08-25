@@ -155,7 +155,7 @@ fn send_test_key(s: &mut MechanixKeyboardState) {
         .just_released(interactivity::pointer::MouseButton::Left)
     {
         if let Some(vkbd) = s.globals.virtual_keyboard.clone() {
-            let key = 65;
+            let key = 30;
             let state = WlKeyboardKeyState::Released;
             vkbd.key(
                 (Instant::now() - s.virtual_keyboard_state.start_time).as_millis() as u32,
