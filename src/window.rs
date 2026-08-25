@@ -1,6 +1,13 @@
+use std::time::Instant;
+
+use ui::Point;
+use utils::Rect;
+use utils::Size;
 use wayland::*;
+use xkbcommon::xkb;
 
 use crate::MechanixKeyboardState;
+use crate::layout::MARGIN;
 use crate::render;
 
 const HEIGHT: u32 = 100;
@@ -235,7 +242,78 @@ fn on_keyboard(s: &mut MechanixKeyboardState, event: &WlKeyboardEvent) {
 fn on_pointer(s: &mut MechanixKeyboardState, event: &WlPointerEvent) {
     s.interactivity.call_before_frame();
     s.interactivity.process_pointer(event);
-    tracing::debug!(?event, "pointer input");
+    // tracing::debug!(?event, "pointer input");
+    let Some(vkbd) = s.globals.virtual_keyboard.clone() else {
+        return;
+    };
+    if let Some(layout) = s.layout.as_ref() {
+        let width: f32;
+        let height: f32;
+        if let Some(outline) = layout.outlines.get("default") {
+            width = outline.width;
+            height = outline.height;
+        } else {
+            tracing::warn!("Using fallback width and height");
+            width = 20.0;
+            height = 10.0;
+        }
+        for (_, rows) in &layout.views {
+            let mut y: f32 = 0.0;
+            for row in rows {
+                let mut x: f32 = 0.0;
+                for button in row.split_whitespace() {
+                    let mut state = WlKeyboardKeyState::Pressed;
+                    let button_rect = Rect {
+                        origin: Point::new(x, y),
+                        size: Size::new(width, height),
+                    };
+                    let mut is_key_event_needed = false;
+                    if s.interactivity
+                        .pointer
+                        .just_pressed(interactivity::pointer::MouseButton::Left)
+                        && button_rect.contains_point(s.interactivity.pointer.position())
+                    {
+                        is_key_event_needed = true;
+                        state = WlKeyboardKeyState::Pressed;
+                        tracing::info!("Pressed {button}");
+                    } else if s
+                        .interactivity
+                        .pointer
+                        .just_released(interactivity::pointer::MouseButton::Left)
+                        && button_rect.contains_point(s.interactivity.pointer.position())
+                    {
+                        is_key_event_needed = true;
+                        state = WlKeyboardKeyState::Released;
+                        tracing::info!("Released {button}");
+                    }
+                    if is_key_event_needed {
+                        let Some(char) = button.chars().next() else {
+                            continue;
+                        };
+                        let keysym = xkb::utf32_to_keysym(char as u32);
+
+                        let Some(&x11_keycode) =
+                            s.virtual_keyboard_state.keysym_map.get(&keysym.raw())
+                        else {
+                            tracing::warn!("No keycode found for keysym 0x{:x}", keysym.raw());
+                            continue;
+                        };
+
+                        let evdev_key = x11_keycode - 8;
+
+                        vkbd.key(
+                            (Instant::now() - s.virtual_keyboard_state.start_time).as_millis()
+                                as u32,
+                            evdev_key,
+                            state.into(),
+                        );
+                    }
+                    x += width + MARGIN;
+                }
+                y += height + MARGIN;
+            }
+        }
+    }
 }
 
 fn on_touch(s: &mut MechanixKeyboardState, event: &WlTouchEvent) {
