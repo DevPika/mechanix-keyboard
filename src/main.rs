@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use app::prelude::*;
 use interactivity::InteractivityState;
@@ -13,7 +16,7 @@ mod window;
 
 use window::{WaylandGlobals, WindowState};
 
-use crate::virtual_keyboard::VirtualKeyboardState;
+use crate::{layout::Layout, virtual_keyboard::VirtualKeyboardState};
 
 #[derive(State)]
 pub struct MechanixKeyboardState {
@@ -30,6 +33,7 @@ pub struct MechanixKeyboardState {
     #[lens(skip)]
     frame_callbacks: HashSet<ObjectId>,
     virtual_keyboard_state: VirtualKeyboardState,
+    layout: Option<Layout>,
 }
 
 impl MechanixKeyboardState {
@@ -48,7 +52,9 @@ impl MechanixKeyboardState {
             virtual_keyboard_state: VirtualKeyboardState {
                 start_time: Instant::now(),
                 keymap: None,
+                keysym_map: HashMap::new(),
             },
+            layout: None,
         }
     }
 }

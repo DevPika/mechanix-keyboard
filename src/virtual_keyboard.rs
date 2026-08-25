@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Instant;
 
@@ -6,7 +7,7 @@ use rustix::io;
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
 use wayland::{WlKeyboardKeyState, WlKeyboardKeymapFormat};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{Context, Keymap};
+use xkbcommon::xkb::{self, Context, Keymap};
 
 use crate::MechanixKeyboardState;
 
@@ -26,6 +27,7 @@ impl KeymapWithFd {
 pub struct VirtualKeyboardState {
     pub start_time: Instant,
     pub keymap: Option<KeymapWithFd>,
+    pub keysym_map: HashMap<u32, u32>,
 }
 
 /// zwp_virtual_keyboard_v1
@@ -75,6 +77,7 @@ fn on_pre_poll(s: &mut MechanixKeyboardState, _: &app::PrePoll) {
     );
 
     s.globals.virtual_keyboard = Some(vkbd);
+    s.virtual_keyboard_state.keysym_map = build_keysym_to_keycode(&keymap);
     s.virtual_keyboard_state.keymap = Some(keymap_fd);
     tracing::info!("sent keymap to virtual keyboard");
 }
@@ -132,6 +135,25 @@ pub fn make_keymap_fd(text: &[u8]) -> io::Result<(OwnedFd, u32)> {
     )?;
 
     Ok((fd, size as u32))
+}
+
+/// Build a keysym -> X11-style keycode map from the compiled keymap.
+/// Uses layout 0, level 0 (i.e. the unshifted symbol) for each key.
+fn build_keysym_to_keycode(keymap: &xkb::Keymap) -> HashMap<u32, u32> {
+    let mut map = HashMap::new();
+    let min = keymap.min_keycode().raw();
+    let max = keymap.max_keycode().raw();
+
+    for raw in min..=max {
+        let keycode = xkb::Keycode::new(raw);
+        for layout in 0..keymap.num_layouts_for_key(keycode) {
+            let syms = keymap.key_get_syms_by_level(keycode, layout, 0);
+            for sym in syms {
+                map.entry(sym.raw()).or_insert(raw);
+            }
+        }
+    }
+    map
 }
 
 fn send_test_key(s: &mut MechanixKeyboardState) {
