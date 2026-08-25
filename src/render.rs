@@ -1,10 +1,13 @@
 use std::os::fd::AsFd;
 
-use renderer::commands::{ClearColor, Color};
+use renderer::commands::{ClearColor, Color, DrawRect};
 use renderer::{DmaBuf, RenderableSurface, Renderer};
+use ui::Point;
+use utils::Size;
 use wayland::{Handle, ObjectId, WlBuffer, ZwpLinuxBufferParamsV1Flags, ZwpLinuxDmabufV1};
 
 use crate::MechanixKeyboardState;
+use crate::layout::MARGIN;
 
 /// Background the keyboard bar clears to. No keys are drawn yet — this solid
 /// fill is only what maps the surface so it can take focus and input.
@@ -103,6 +106,41 @@ pub fn render(s: &mut MechanixKeyboardState) {
     s.renderer.active_surface(&slots[back].surface);
     s.renderer.set_scissor(None);
     s.renderer.send_command(ClearColor(CLEAR));
+
+    if let Some(layout) = s.layout.as_ref() {
+        let width: f32;
+        let height: f32;
+        if let Some(outline) = layout.outlines.get("default") {
+            width = outline.width;
+            height = outline.height;
+        } else {
+            tracing::warn!("Using fallback width and height");
+            width = 20.0;
+            height = 10.0;
+        }
+        for (_, rows) in &layout.views {
+            let mut y: f32 = 0.0;
+            for row in rows {
+                let mut x: f32 = 0.0;
+                for _button in row.split_whitespace() {
+                    s.renderer.send_command(DrawRect {
+                        color: Color {
+                            r: 0.3,
+                            g: 0.3,
+                            b: 0.3,
+                            a: 0.0,
+                        },
+                        origin: Point::new(x, y),
+                        z: 0.5,
+                        size: Size::new(width, height),
+                    });
+                    x += width + MARGIN;
+                }
+                y += height + MARGIN;
+            }
+        }
+    }
+
     s.renderer.render_frame();
     s.renderer.finish();
 
