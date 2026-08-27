@@ -1,14 +1,45 @@
 use std::os::fd::AsFd;
 
-use renderer::commands::{ClearColor, Color};
-use renderer::{DmaBuf, RenderableSurface, Renderer};
+use assets::BakedFont;
+use renderer::commands::{
+    ClearColor, Color, DrawMonochromeSprite, DrawRect, DrawText, Point, Rect, Size,
+};
+use renderer::{DmaBuf, RenderableSurface, Renderer, TextureId};
 use wayland::{Handle, ObjectId, WlBuffer, ZwpLinuxBufferParamsV1Flags, ZwpLinuxDmabufV1};
 
-use crate::MechanixKeyboardState;
+use std::collections::HashSet;
 
-/// Background the keyboard bar clears to. No keys are drawn yet — this solid
-/// fill is only what maps the surface so it can take focus and input.
+use crate::layout::{KeyAction, KeyFace};
+use crate::window::HANDLE_HEIGHT;
+use crate::{MechanixKeyboardState, atlas, layout};
+
+/// Background the keyboard bar clears to, behind the keys.
 const CLEAR: Color = Color::from_rgb8(24, 24, 32);
+/// Solid fill of the Handle band at the bottom edge — the whole bar when hidden,
+/// a band below the keys when shown. No glyph or grip; just this colour.
+const HANDLE_BG: Color = Color::from_rgb8(40, 44, 60);
+/// Fill colour of each key box.
+const KEY_BG: Color = Color::from_rgb8(46, 52, 72);
+/// Fill colour of a latched modifier's key box — a brighter accent so the armed
+/// (one-shot) state reads at a glance, OSK-style.
+const KEY_BG_ARMED: Color = Color::from_rgb8(72, 104, 156);
+/// Colour of the key label text.
+const KEY_LABEL: Color = Color::from_rgb8(220, 226, 240);
+/// The baked font used for labels (ASCII 32..126 only).
+const FONT: &BakedFont = &atlas::KEYBOARD_FONT_ROBOTO_64;
+
+/// Logical inset applied to every key box so adjacent keys — which butt together
+/// in the IR — show a visible gap. Scaled to pixels alongside the layout.
+const KEY_INSET: f32 = 2.0;
+/// Depth of the key box (far) and its label (near). `GEQUAL` depth test: larger
+/// z wins, so the label draws over its box.
+const Z_BOX: f32 = 0.10;
+const Z_TEXT: f32 = 0.20;
+
+/// Icon side length as a fraction of the key's inner height. Icons are square and
+/// geometrically centred; expect to tune this once it's visible on the Comet.
+const ICON_SCALE: f32 = 0.5;
+
 /// DRM fourcc for ARGB8888, matching the renderer's DmaBuf format.
 const DRM_FORMAT_ARGB8888: u32 = 0x3432_5241;
 
@@ -22,11 +53,99 @@ pub struct Slot {
     pub released: bool,
 }
 
-/// Renderer setup: bring the GPU pipelines up before any surface is drawn.
+/// Renderer setup: bring the GPU pipelines up and upload the glyph atlas before
+/// any surface is drawn. The GL context is current from `Renderer::new`, so the
+/// texture upload is safe here at `Start`.
 pub fn module<S>() -> impl app::RegisteredModule<MechanixKeyboardState, S> {
     app::Module::new().on(|s: &mut MechanixKeyboardState, _: &app::Start| {
         s.renderer.init_pipelines();
+        match s.renderer.upload_atlas(&atlas::KEYBOARD) {
+            Ok(id) => s.atlas_texture = Some(id),
+            Err(e) => tracing::error!("atlas upload failed: {e:?}"),
+        }
     })
+}
+
+/// Draw one view's keys into the active surface: a filled box per key, its face
+/// (text label or icon) centred on top. `buffer_w` is the physical buffer width;
+/// the whole view is
+/// scaled uniformly to fill it (`k = buffer_w / view_width`), which keeps the
+/// layout's aspect ratio — the bar's height was sized to match (see `window`).
+fn draw_view(
+    renderer: &mut Renderer,
+    view: &layout::View,
+    tex: Option<TextureId>,
+    buffer_w: f32,
+    latched: &HashSet<String>,
+) {
+    let view_w = view.width();
+    if view_w <= 0.0 {
+        return;
+    }
+    let k = buffer_w / view_w;
+    let inset = KEY_INSET * k;
+
+    for key in view.keys() {
+        let r = key.rect;
+        let bx = r.x() * k + inset;
+        let by = r.y() * k + inset;
+        let bw = (r.width() * k - 2.0 * inset).max(0.0);
+        let bh = (r.height() * k - 2.0 * inset).max(0.0);
+
+        // A latched modifier key gets the armed fill; every other key the plain
+        // one. The face's opaque background must match, or its antialiased edges
+        // blend against the wrong colour.
+        let armed = matches!(&key.action, KeyAction::LatchModifier(name) if latched.contains(name));
+        let bg = if armed { KEY_BG_ARMED } else { KEY_BG };
+
+        renderer.send_command(DrawRect {
+            color: bg,
+            origin: Point::new(bx, by),
+            z: Z_BOX,
+            size: Size::new(bw, bh),
+        });
+
+        // The face draws over the box. Text still only covers ASCII 32..126 (the
+        // baked font); an icon is a baked sprite tinted with the label colour.
+        let Some(tex) = tex else { continue };
+        match &key.face {
+            KeyFace::Text(text) => {
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let text_w = FONT.measure_width(text);
+                let tx = bx + (bw - text_w) / 2.0;
+                let baseline = by + FONT.get_baseline_offset(bh);
+                renderer.send_command(DrawText {
+                    font: FONT,
+                    texture_id: tex,
+                    text: text.clone(),
+                    origin: Point::new(tx, baseline),
+                    z: Z_TEXT,
+                    color: KEY_LABEL,
+                    background: bg,
+                    is_opaque: true,
+                });
+            }
+            KeyFace::Icon(region) => {
+                // Square, sized to a fraction of the key's inner height, centred
+                // on both axes (an icon has no text baseline to sit on).
+                let side = bh * ICON_SCALE;
+                let ix = bx + (bw - side) / 2.0;
+                let iy = by + (bh - side) / 2.0;
+                renderer.send_command(DrawMonochromeSprite {
+                    texture_id: tex,
+                    region: Rect::new(region.x, region.y, region.w, region.h),
+                    origin: Point::new(ix, iy),
+                    z: Z_TEXT,
+                    size: Size::new(side, side),
+                    color: KEY_LABEL,
+                    background: bg,
+                    is_opaque: true,
+                });
+            }
+        }
+    }
 }
 
 /// Allocate the two dmabuf-backed slots the bar double-buffers between.
@@ -98,16 +217,50 @@ pub fn render(s: &mut MechanixKeyboardState) {
         window.pending_frame = true;
         return;
     }
-    let (w, h) = (window.width, window.height);
+    // Physical buffer dims for scissor/scaling; logical dims for surface damage
+    // (damage is in surface-local coordinates, which are pre-buffer-scale).
+    let buffer_w = window.physical_width;
+    let buffer_h = window.physical_height;
+    let visible = window.visible;
+    let scale = s.scale.max(1) as u32;
+    let (lw, lh) = (window.logical_width, window.logical_height);
 
     s.renderer.active_surface(&slots[back].surface);
     s.renderer.set_scissor(None);
     s.renderer.send_command(ClearColor(CLEAR));
+
+    // Keys draw only while shown; they scale by width to fill the top region,
+    // leaving the bottom HANDLE_HEIGHT band for the Handle.
+    if visible {
+        let current = s.current_view;
+        if let Some(view) = s.keymap.as_ref().and_then(|km| km.views.get(current)) {
+            draw_view(
+                &mut s.renderer,
+                view,
+                s.atlas_texture,
+                buffer_w as f32,
+                &s.virtual_keyboard_state.latched,
+            );
+        }
+    }
+
+    // The Handle: a solid band filling the bottom HANDLE_HEIGHT of the buffer —
+    // the entire buffer when hidden (buffer_h == handle_ph).
+    let handle_ph = (HANDLE_HEIGHT * scale) as f32;
+    s.renderer.send_command(DrawRect {
+        color: HANDLE_BG,
+        origin: Point::new(0.0, buffer_h as f32 - handle_ph),
+        z: Z_BOX,
+        size: Size::new(buffer_w as f32, handle_ph),
+    });
+
     s.renderer.render_frame();
     s.renderer.finish();
 
+    let window = s.window.as_mut().expect("window still present");
+    let slots = window.slots.as_mut().expect("slots still present");
     window.surface.attach(Some(&slots[back].buffer), 0, 0);
-    window.surface.damage(0, 0, w as i32, h as i32);
+    window.surface.damage(0, 0, lw as i32, lh as i32);
     let cb = window.surface.frame();
     window.surface.commit();
     slots[back].released = false;
