@@ -5,7 +5,10 @@ use std::time::Instant;
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, ftruncate, memfd_create};
 use rustix::io;
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
-use wayland::{WlKeyboardKeyState, WlKeyboardKeymapFormat};
+use wayland::{
+    Interface, WlKeyboardKeyState, WlKeyboardKeymapFormat, WlRegistryEvent, WlSeat,
+    ZwpVirtualKeyboardManagerV1,
+};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
 
@@ -61,21 +64,39 @@ impl VirtualKeyboardState {
 }
 
 pub fn module<S>() -> impl app::RegisteredModule<MechanixKeyboardState, S> {
-    app::Module::new().on(on_pre_poll)
+    app::Module::new().on(on_registry)
 }
 
-/// The seat/manager are only known after the registry roundtrip, so create the
-/// virtual keyboard lazily on the first poll where both are available. Once it
-/// exists there's nothing to do here — tapping a key drives emission directly.
-fn on_pre_poll(s: &mut MechanixKeyboardState, _: &app::PrePoll) {
-    if s.globals.virtual_keyboard.is_some() {
+/// Bind to the globals when the registry advertises them.
+fn on_registry(s: &mut MechanixKeyboardState, event: &WlRegistryEvent) {
+    let WlRegistryEvent::Global {
+        sender,
+        name,
+        interface,
+        version,
+    } = event
+    else {
         return;
+    };
+    match interface.as_str() {
+        WlSeat::NAME => s.globals.seat = Some(sender.bind(*name, *version)),
+        ZwpVirtualKeyboardManagerV1::NAME => {
+            s.globals.virtual_keyboard_manager = Some(sender.bind(*name, *version))
+        }
+        _ => {}
     }
+    if s.globals.seat.is_some() && s.globals.virtual_keyboard_manager.is_some() {
+        init(s);
+    }
+}
+
+/// Create the virtual keyboard after the globals are available.
+fn init(s: &mut MechanixKeyboardState) {
     let (Some(seat), Some(manager)) = (
         s.globals.seat.clone(),
         s.globals.virtual_keyboard_manager.clone(),
     ) else {
-        // Not advertised yet; try again next poll (no log — this fires every poll).
+        tracing::error!("could not find globals!");
         return;
     };
 
@@ -139,10 +160,7 @@ fn scan_keycodes(keymap: &Keymap) -> HashMap<Keysym, Keystroke> {
             if let Some(ks) = syms.first().copied()
                 && ks.raw() != 0
             {
-                map.entry(ks).or_insert(Keystroke {
-                    code: kc - 8,
-                    mods,
-                });
+                map.entry(ks).or_insert(Keystroke { code: kc - 8, mods });
             }
         }
     }

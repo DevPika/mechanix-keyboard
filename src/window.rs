@@ -74,10 +74,6 @@ fn on_registry(s: &mut MechanixKeyboardState, event: &WlRegistryEvent) {
         ZwlrLayerShellV1::NAME => s.globals.layer_shell = Some(sender.bind(*name, *version)),
         WlOutput::NAME => s.globals.output = Some(sender.bind(*name, *version)),
         ZwpLinuxDmabufV1::NAME => s.globals.dmabuf = Some(sender.bind(*name, *version)),
-        WlSeat::NAME => s.globals.seat = Some(sender.bind(*name, *version)),
-        ZwpVirtualKeyboardManagerV1::NAME => {
-            s.globals.virtual_keyboard_manager = Some(sender.bind(*name, *version))
-        }
         _ => {}
     }
 }
