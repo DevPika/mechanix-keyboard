@@ -1,7 +1,6 @@
 use interactivity::pointer::MouseButton;
-use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, ftruncate, memfd_create};
-use rustix::io;
-use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
+use rustix::fs::{MemfdFlags, SealFlags};
+use rustix::mm::{MapFlags, ProtFlags};
 use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Instant;
@@ -24,7 +23,7 @@ pub struct KeymapWithFd {
 }
 
 impl KeymapWithFd {
-    pub fn new(text: &[u8]) -> io::Result<Self> {
+    pub fn new(text: &[u8]) -> rustix::io::Result<Self> {
         let (fd, size) = make_keymap_fd(text)?;
         Ok(Self { fd, size })
     }
@@ -480,21 +479,21 @@ fn emit_keysym(s: &mut MechanixKeyboardState, ks: Keysym) {
 
 /// Builds a sealed, shared memfd holding `text` as a NUL-terminated
 /// buffer, ready to send as `set_keymap`'s fd + size.
-pub fn make_keymap_fd(text: &[u8]) -> io::Result<(OwnedFd, u32)> {
+pub fn make_keymap_fd(text: &[u8]) -> rustix::io::Result<(OwnedFd, u32)> {
     let size = text.len() + 1; // +1 for the trailing NUL the protocol expects
 
-    let fd: OwnedFd = memfd_create(
+    let fd: OwnedFd = rustix::fs::memfd_create(
         c"mechanix-keyboard-keymap",
         MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
     )?;
 
-    ftruncate(&fd, size as u64)?;
+    rustix::fs::ftruncate(&fd, size as u64)?;
 
     // SAFETY: `fd` is a valid memfd truncated to `size` bytes; the mapping
     // is unmapped (via the guard below) before this function returns, and
     // nothing else touches `fd` concurrently.
     let map = unsafe {
-        mmap(
+        rustix::mm::mmap(
             std::ptr::null_mut(),
             size,
             ProtFlags::READ | ProtFlags::WRITE,
@@ -508,7 +507,7 @@ pub fn make_keymap_fd(text: &[u8]) -> io::Result<(OwnedFd, u32)> {
     impl Drop for MmapGuard {
         fn drop(&mut self) {
             unsafe {
-                let _ = munmap(self.0, self.1);
+                let _ = rustix::mm::munmap(self.0, self.1);
             }
         }
     }
@@ -525,7 +524,7 @@ pub fn make_keymap_fd(text: &[u8]) -> io::Result<(OwnedFd, u32)> {
     }
     drop(guard);
 
-    fcntl_add_seals(
+    rustix::fs::fcntl_add_seals(
         &fd,
         SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE | SealFlags::SEAL,
     )?;
