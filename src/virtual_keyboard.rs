@@ -1,19 +1,22 @@
-use std::collections::{HashMap, HashSet};
-use std::os::fd::{AsFd, OwnedFd};
-use std::time::Instant;
-
+use interactivity::pointer::MouseButton;
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, ftruncate, memfd_create};
 use rustix::io;
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
+use std::collections::{HashMap, HashSet};
+use std::os::fd::{AsFd, OwnedFd};
+use std::time::Instant;
+use utils::Point;
 use wayland::{
-    Interface, WlKeyboardKeyState, WlKeyboardKeymapFormat, WlRegistryEvent, WlSeat,
-    ZwpVirtualKeyboardManagerV1,
+    Handle, Interface, WlKeyboard, WlKeyboardEvent, WlKeyboardKeyState, WlKeyboardKeymapFormat,
+    WlPointer, WlPointerEvent, WlRegistryEvent, WlSeat, WlSeatCapability, WlSeatEvent, WlTouch,
+    WlTouchEvent, ZwpVirtualKeyboardManagerV1, ZwpVirtualKeyboardV1,
 };
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
 
-use crate::MechanixKeyboardState;
-use crate::layout::KeyAction;
+use crate::layout::{KeyAction, View};
+use crate::window::{handle_rect, scale_rect, toggle_visibility, view_and_factor};
+use crate::{MechanixKeyboardState, render};
 
 pub struct KeymapWithFd {
     fd: OwnedFd,
@@ -38,6 +41,14 @@ pub struct Keystroke {
 }
 
 pub struct VirtualKeyboardState {
+    /// Wayland handles
+    pub seat: Option<Handle<WlSeat>>,
+    pub pointer: Option<Handle<WlPointer>>,
+    pub keyboard: Option<Handle<WlKeyboard>>,
+    pub touch: Option<Handle<WlTouch>>,
+    pub virtual_keyboard_manager: Option<Handle<ZwpVirtualKeyboardManagerV1>>,
+    pub virtual_keyboard: Option<Handle<ZwpVirtualKeyboardV1>>,
+
     pub start_time: Instant,
     pub keymap: Option<KeymapWithFd>,
     /// keysym → keystroke, scanned from the uploaded keymap's base and shifted
@@ -54,6 +65,12 @@ pub struct VirtualKeyboardState {
 impl VirtualKeyboardState {
     pub fn new() -> Self {
         Self {
+            seat: None,
+            pointer: None,
+            keyboard: None,
+            touch: None,
+            virtual_keyboard_manager: None,
+            virtual_keyboard: None,
             start_time: Instant::now(),
             keymap: None,
             keycodes: HashMap::new(),
@@ -64,7 +81,12 @@ impl VirtualKeyboardState {
 }
 
 pub fn module<S>() -> impl app::RegisteredModule<MechanixKeyboardState, S> {
-    app::Module::new().on(on_registry)
+    app::Module::new()
+        .on(on_registry)
+        .on(on_seat)
+        .on(on_pointer)
+        .on(on_keyboard)
+        .on(on_touch)
 }
 
 /// Bind to the globals when the registry advertises them.
@@ -79,13 +101,15 @@ fn on_registry(s: &mut MechanixKeyboardState, event: &WlRegistryEvent) {
         return;
     };
     match interface.as_str() {
-        WlSeat::NAME => s.globals.seat = Some(sender.bind(*name, *version)),
+        WlSeat::NAME => s.virtual_keyboard_state.seat = Some(sender.bind(*name, *version)),
         ZwpVirtualKeyboardManagerV1::NAME => {
-            s.globals.virtual_keyboard_manager = Some(sender.bind(*name, *version))
+            s.virtual_keyboard_state.virtual_keyboard_manager = Some(sender.bind(*name, *version))
         }
         _ => {}
     }
-    if s.globals.seat.is_some() && s.globals.virtual_keyboard_manager.is_some() {
+    if s.virtual_keyboard_state.seat.is_some()
+        && s.virtual_keyboard_state.virtual_keyboard_manager.is_some()
+    {
         init(s);
     }
 }
@@ -93,8 +117,8 @@ fn on_registry(s: &mut MechanixKeyboardState, event: &WlRegistryEvent) {
 /// Create the virtual keyboard after the globals are available.
 fn init(s: &mut MechanixKeyboardState) {
     let (Some(seat), Some(manager)) = (
-        s.globals.seat.clone(),
-        s.globals.virtual_keyboard_manager.clone(),
+        s.virtual_keyboard_state.seat.clone(),
+        s.virtual_keyboard_state.virtual_keyboard_manager.clone(),
     ) else {
         tracing::error!("could not find globals!");
         return;
@@ -137,10 +161,203 @@ fn init(s: &mut MechanixKeyboardState) {
     );
 
     tracing::info!(mapped = keycodes.len(), "virtual keyboard ready");
-    s.globals.virtual_keyboard = Some(vkbd);
+    s.virtual_keyboard_state.virtual_keyboard = Some(vkbd);
     s.virtual_keyboard_state.keymap = Some(keymap_fd);
     s.virtual_keyboard_state.keycodes = keycodes;
     s.virtual_keyboard_state.mod_masks = mod_masks;
+}
+
+/// Bind keyboard/pointer/touch as the seat reports having them.
+fn on_seat(s: &mut MechanixKeyboardState, event: &WlSeatEvent) {
+    let WlSeatEvent::Capabilities { capabilities, .. } = event else {
+        return;
+    };
+    let Some(seat) = s.virtual_keyboard_state.seat.clone() else {
+        return;
+    };
+    if capabilities.contains(WlSeatCapability::Keyboard)
+        && s.virtual_keyboard_state.keyboard.is_none()
+    {
+        s.virtual_keyboard_state.keyboard = Some(seat.get_keyboard());
+    }
+    if capabilities.contains(WlSeatCapability::Pointer)
+        && s.virtual_keyboard_state.pointer.is_none()
+    {
+        s.virtual_keyboard_state.pointer = Some(seat.get_pointer());
+    }
+    if capabilities.contains(WlSeatCapability::Touch) && s.virtual_keyboard_state.touch.is_none() {
+        s.virtual_keyboard_state.touch = Some(seat.get_touch());
+    }
+}
+
+// ── input → interactivity ──────────────────────────────────────────────────
+
+fn on_keyboard(s: &mut MechanixKeyboardState, event: &WlKeyboardEvent) {
+    s.interactivity.call_before_frame();
+    s.interactivity.process_keyboard(event);
+    tracing::debug!(
+        just_pressed = ?s.interactivity.keyboard.just_pressed_keys(),
+        just_released = ?s.interactivity.keyboard.just_released_keys(),
+        modifiers = ?s.interactivity.keyboard.modifiers(),
+        "keyboard input",
+    );
+}
+
+fn on_pointer(s: &mut MechanixKeyboardState, event: &WlPointerEvent) {
+    s.interactivity.call_before_frame();
+    s.interactivity.process_pointer(event);
+
+    // Copy the surface-local points out before the keymap borrow, so the
+    // interactivity borrow is released for the hit-test below.
+    let position = s.interactivity.pointer.position();
+    let pressed = s
+        .interactivity
+        .pointer
+        .just_pressed_position(MouseButton::Left)
+        .copied();
+
+    // A click on the Handle toggles Bar visibility, in either state. The Handle
+    // sits below the keys, so it never overlaps a key's touch area.
+    if let Some(hr) = handle_rect(s) {
+        if pressed.is_some_and(|p| hr.contains_point(p)) {
+            toggle_visibility(s);
+            return;
+        }
+    }
+
+    // Keys are only live while shown; when hidden, clear any stale hover.
+    if !s.window.as_ref().is_some_and(|w| w.visible) {
+        if s.last_hover.take().is_some() {
+            tracing::info!("hover: none");
+        }
+        return;
+    }
+
+    // Resolve the hover label and the clicked key's action while the keymap is
+    // borrowed, then act after the borrow ends (emitting needs `&mut s`).
+    let (hover, clicked) = {
+        let Some((view, f)) = view_and_factor(s) else {
+            return;
+        };
+        let hover = key_at(view, f, position);
+        let clicked = pressed.and_then(|p| action_at(view, f, p));
+        (hover, clicked)
+    };
+
+    // Click: type the key the left button went down on this frame.
+    if let Some(action) = clicked {
+        dispatch_action(s, &action);
+    }
+
+    // Hover: print only when the key under the pointer changes.
+    if hover != s.last_hover {
+        match &hover {
+            Some(label) => tracing::info!(key = %label, "hover"),
+            None => tracing::info!("hover: none"),
+        }
+        s.last_hover = hover;
+    }
+}
+
+fn on_touch(s: &mut MechanixKeyboardState, event: &WlTouchEvent) {
+    s.interactivity.call_before_frame();
+    s.interactivity.process_touch(event);
+
+    // A tap on the Handle toggles Bar visibility, in either state. Check it
+    // first; the Handle sits below the keys, so it never overlaps a key.
+    if let Some(hr) = handle_rect(s) {
+        if s.interactivity.touch.tapped(hr) {
+            toggle_visibility(s);
+            return;
+        }
+    }
+
+    // Keys are only live while shown.
+    if !s.window.as_ref().is_some_and(|w| w.visible) {
+        return;
+    }
+
+    // Probe each key's touch area for a tap that landed and completed this frame,
+    // cloning the tapped key's action out so the keymap borrow ends before we
+    // emit (which needs `&mut s`).
+    let tapped = {
+        let Some((view, f)) = view_and_factor(s) else {
+            return;
+        };
+        view.keys()
+            .find(|key| s.interactivity.touch.tapped(scale_rect(key.touch_area, f)))
+            .map(|key| key.action.clone())
+    };
+
+    if let Some(action) = tapped {
+        dispatch_action(s, &action);
+    }
+}
+
+/// Route a tapped key's action. A view switch mutates the Current view; a
+/// modifier latch arms/disarms; both repaint here. Every other action is a
+/// keystroke the virtual keyboard emits (which also repaints if it consumes a
+/// latch, so the armed highlight clears).
+fn dispatch_action(s: &mut MechanixKeyboardState, action: &KeyAction) {
+    let target = match action {
+        KeyAction::SetView(name) => name.as_str(),
+        KeyAction::ToggleView { lock, unlock } => {
+            // Toggle by current view: if the lock view is already showing, go
+            // back to `unlock`; otherwise switch to `lock`.
+            let current = s.current_view().map(|v| v.name.as_str());
+            if current == Some(lock.as_str()) {
+                unlock.as_str()
+            } else {
+                lock.as_str()
+            }
+        }
+        KeyAction::LatchModifier(name) => {
+            // Arm/disarm the modifier and repaint so its key shows the change.
+            toggle_latch(s, name);
+            render::render(s);
+            return;
+        }
+        _ => {
+            // Emit; if a latch was armed, it's now consumed, so repaint to drop
+            // the highlight. Compare the armed count across the emit.
+            let armed_before = s.virtual_keyboard_state.latched.len();
+            emit_action(s, action);
+            if s.virtual_keyboard_state.latched.len() != armed_before {
+                render::render(s);
+            }
+            return;
+        }
+    };
+    switch_view(s, target);
+}
+
+/// Switch the Current view to the named one and repaint. A no-op (no repaint) if
+/// the name is unknown or already current.
+fn switch_view(s: &mut MechanixKeyboardState, name: &str) {
+    let Some(idx) = s.keymap.as_ref().and_then(|km| km.index_of(name)) else {
+        tracing::warn!(view = %name, "view switch to unknown view; ignored");
+        return;
+    };
+    if idx == s.current_view {
+        return;
+    }
+    s.current_view = idx;
+    tracing::info!(view = %name, "switched view");
+    render::render(s);
+}
+
+/// Label of the first key whose (scaled) touch area contains `p`, else `None`.
+fn key_at(view: &View, f: f32, p: Point) -> Option<String> {
+    view.keys()
+        .find(|k| scale_rect(k.touch_area, f).contains_point(p))
+        .map(|k| k.display_label().to_string())
+}
+
+/// Action of the first key whose (scaled) touch area contains `p`, cloned.
+fn action_at(view: &View, f: f32, p: Point) -> Option<KeyAction> {
+    view.keys()
+        .find(|k| scale_rect(k.touch_area, f).contains_point(p))
+        .map(|k| k.action.clone())
 }
 
 /// Build the `keysym → Keystroke` map from a compiled keymap's base (level 0) and
@@ -238,7 +455,7 @@ fn emit_keysym(s: &mut MechanixKeyboardState, ks: Keysym) {
         tracing::warn!(keysym = %name, "keysym absent from keymap; not typed");
         return;
     };
-    let Some(vkbd) = s.globals.virtual_keyboard.clone() else {
+    let Some(vkbd) = s.virtual_keyboard_state.virtual_keyboard.clone() else {
         tracing::warn!(keysym = %name, "virtual keyboard not ready; key dropped");
         return;
     };
