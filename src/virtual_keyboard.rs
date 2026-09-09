@@ -390,14 +390,30 @@ fn scan_keycodes(keymap: &Keymap) -> HashMap<Keysym, Keystroke> {
 pub fn emit_action(s: &mut MechanixKeyboardState, action: &KeyAction) {
     match action {
         KeyAction::EmitKeysym(ks) => {
-            emit_keysym(s, *ks);
-            consume_latch(s);
+            // TODO Keys like BackSpace with input-method
+            if crate::input_method::commit_text(s, &xkb::keysym_get_name(*ks)) {
+                tracing::info!("Input method : {}", xkb::keysym_get_name(*ks));
+                consume_latch(s);
+            } else {
+                emit_keysym(s, *ks);
+                consume_latch(s);
+            }
         }
         KeyAction::EmitText(text) => {
-            for ch in text.chars() {
-                emit_keysym(s, Keysym::from_char(ch));
+            // When a text input is focused, the compositor has activated IM2;
+            // commit the run as one `commit_string` — the idiomatic IM2 text
+            // path — rather than synthesising a keysym per character. Falls back
+            // to the virtual-keyboard-v1 keysym transport when no text input is
+            // focused (IM2 inactive or unbound).
+            if crate::input_method::commit_text(s, text) {
+                tracing::info!("Input method: {text}");
+                consume_latch(s);
+            } else {
+                for ch in text.chars() {
+                    emit_keysym(s, Keysym::from_char(ch));
+                }
+                consume_latch(s);
             }
-            consume_latch(s);
         }
         KeyAction::Unhandled(name) => {
             tracing::info!(action = %name, "tapped key with no wired action");
