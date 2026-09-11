@@ -23,7 +23,7 @@ use wayland::{
     ZwpTextInputV3ContentPurpose,
 };
 
-use crate::MechanixKeyboardState;
+use crate::{MechanixKeyboardState, window::set_visibility};
 
 /// The text-input context the compositor reports for the focused field.
 ///
@@ -268,9 +268,12 @@ fn on_input_method_event(s: &mut MechanixKeyboardState, event: &ZwpInputMethodV2
             let st = &mut s.input_method_state;
             st.current = st.pending.clone();
             st.serial = st.serial.wrapping_add(1);
+            let active = st.current.active;
+            let serial = st.serial;
+            set_visibility(s, active);
             tracing::info!(
-                active = st.current.active,
-                serial = st.serial,
+                active = active,
+                serial = serial,
                 "input-method: state applied"
             );
         }
