@@ -456,9 +456,9 @@ impl Widget for Shell {
         let role = Role::Layer(LayerRole {
             layer: Layer::Top,
             anchor: Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-            exclusive_zone: 280,
+            exclusive_zone: -1,
             namespace: "mechanix-keyboard".into(),
-            keyboard_interactivity: KeyboardInteractivity::OnDemand,
+            keyboard_interactivity: KeyboardInteractivity::None,
         });
 
         let win = s.spawn_with(
