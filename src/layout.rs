@@ -1,12 +1,30 @@
-use assets::SpriteRegion;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::{env, fs};
 use tracing::{info, warn};
-use utils::Rect;
 use xkbcommon::xkb::{self, Keysym};
 
-use crate::{MechanixKeyboardState, icons};
+/// A simple 2D rectangle (replaces the old `utils::Rect` which is no longer
+/// a direct dependency — the new mecha-wayland layout engine uses `Val`/`px`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Rect {
+    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
+    }
+    pub fn right(&self) -> f32 {
+        self.x + self.w
+    }
+    pub fn bottom(&self) -> f32 {
+        self.y + self.h
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct Layout {
@@ -82,13 +100,13 @@ pub struct Row {
     pub keys: Vec<Key>,
 }
 
-/// What a key draws in its cell: a text label *or* a symbolic icon, never both.
-/// Resolved at IR-build time — the icon is already its baked atlas sprite region,
-/// so the renderer does no per-frame lookup.
+/// What a key draws in its cell: a text label *or* a symbolic icon glyph, never
+/// both. Resolved at IR-build time; the icon is a Unicode glyph string, so no
+/// baked atlas sprite is needed.
 #[derive(Debug, Clone)]
 pub enum KeyFace {
     Text(String),
-    Icon(SpriteRegion),
+    Icon(&'static str),
 }
 
 /// What a Key *does* when activated — the behavioural counterpart to `KeyFace`.
@@ -118,7 +136,7 @@ pub enum KeyAction {
 }
 
 /// One drawable key: what to draw, what it does, and where (logical units).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Key {
     pub face: KeyFace,
     pub action: KeyAction,
@@ -133,8 +151,13 @@ impl Key {
     pub fn display_label(&self) -> &str {
         match &self.face {
             KeyFace::Text(s) => s,
-            KeyFace::Icon(_) => "[icon]",
+            KeyFace::Icon(g) => g,
         }
+    }
+
+    /// The text to render on the key: either the label or the icon glyph.
+    pub fn label_text(&self) -> &str {
+        self.display_label()
     }
 }
 
@@ -253,19 +276,36 @@ impl View {
     }
 }
 
+/// Map a squeekboard icon name to a Unicode glyph. The old OSK baked SVG
+/// sprites into an atlas; the new themed UI uses text labels, so icons are
+/// rendered as Unicode symbols that participate in theming like any text key.
+fn icon_symbol(name: &str) -> Option<&'static str> {
+    match name {
+        "key-shift-symbolic" => Some("\u{21e7}"),          // ⇧
+        "edit-clear-symbolic" => Some("\u{232b}"),         // ⌫
+        "key-enter-symbolic" => Some("\u{23ce}"),          // ⏎
+        "preferences-system-symbolic" => Some("\u{2699}"), // ⚙
+        "go-up-symbolic" => Some("\u{2191}"),              // ↑
+        "go-down-symbolic" => Some("\u{2193}"),            // ↓
+        "go-previous-symbolic" => Some("\u{2190}"),        // ←
+        "go-next-symbolic" => Some("\u{2192}"),            // →
+        _ => None,
+    }
+}
+
 /// Resolve a button token's face. Icon wins over label when both are set
-/// (matching squeekboard) — and warns. An icon name absent from the dictionary
-/// warns and falls back to an empty text face, so the key draws its box but no
-/// glyph. With neither icon nor label, the button's own name is the label.
+/// (matching squeekboard) — and warns. An unknown icon name warns and falls
+/// back to an empty text face. With neither icon nor label, the button's own
+/// name is the label.
 fn resolve_face(token: &str, button: Option<&Button>) -> KeyFace {
     if let Some(icon) = button.and_then(|b| b.icon.as_deref()) {
         if button.and_then(|b| b.label.as_deref()).is_some() {
             warn!("button {token:?} sets both `icon` and `label`; using icon {icon:?}");
         }
-        return match icons::icon_region(icon) {
-            Some(region) => KeyFace::Icon(region),
+        return match icon_symbol(icon) {
+            Some(glyph) => KeyFace::Icon(glyph),
             None => {
-                warn!("icon {icon:?} not in the icon dictionary; drawing empty key");
+                warn!("icon {icon:?} has no Unicode mapping; drawing empty key");
                 KeyFace::Text(String::new())
             }
         };
@@ -364,35 +404,32 @@ fn resolve_outline(layout: &Layout, button: Option<&Button>) -> Outline {
 
 static FALLBACK_LAYOUT: &str = include_str!("../resources/layout.yaml");
 
-/// Load and convert the layout on startup, storing the IR on state.
-pub fn module<S>() -> impl app::RegisteredModule<MechanixKeyboardState, S> {
-    app::Module::new().on(|s: &mut MechanixKeyboardState, _: &app::Start| {
-        let contents = match env::var("MECHA_KBD_LAYOUT") {
-            Ok(path) => fs::read_to_string(path).expect("Error: Failed to read layout file"),
-            Err(_) => {
-                let local = std::path::Path::new("layout.yaml");
-                if local.is_file() {
-                    info!("Using layout.yaml from working directory");
-                    fs::read_to_string(local).expect("Error: Failed to read layout file")
-                } else {
-                    warn!("Warning: No config path provided! Using fallback...");
-                    FALLBACK_LAYOUT.into()
-                }
+/// Load and convert the layout on startup. Checks `MECHA_KBD_LAYOUT` env var,
+/// then `layout.yaml` in the working directory, then the bundled fallback.
+pub fn load_keymap() -> Keymap {
+    let contents = match env::var("MECHA_KBD_LAYOUT") {
+        Ok(path) => fs::read_to_string(path).expect("Error: Failed to read layout file"),
+        Err(_) => {
+            let local = std::path::Path::new("layout.yaml");
+            if local.is_file() {
+                info!("Using layout.yaml from working directory");
+                fs::read_to_string(local).expect("Error: Failed to read layout file")
+            } else {
+                warn!("Warning: No config path provided! Using fallback...");
+                FALLBACK_LAYOUT.into()
             }
-        };
-
-        let layout: Layout = yaml_serde::from_str(&contents).expect("Error: Failed to parse yaml");
-        let keymap = Keymap::from_layout(&layout);
-
-        info!("loaded keymap: {} view(s)", keymap.views.len());
-        for view in &keymap.views {
-            info!("  view {}: {} key(s)", view.name, view.keys().count());
         }
+    };
 
-        // Start on the initial view; fall back to the first view if it's absent.
-        s.current_view = keymap.index_of(crate::INITIAL_VIEW).unwrap_or(0);
-        s.keymap = Some(keymap);
-    })
+    let layout: Layout = yaml_serde::from_str(&contents).expect("Error: Failed to parse yaml");
+    let keymap = Keymap::from_layout(&layout);
+
+    info!("loaded keymap: {} view(s)", keymap.views.len());
+    for view in &keymap.views {
+        info!("  view {}: {} key(s)", view.name, view.keys().count());
+    }
+
+    keymap
 }
 
 #[cfg(test)]
