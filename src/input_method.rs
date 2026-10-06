@@ -9,12 +9,11 @@
 //! applied context; outbound staged `commit_string`/`preedit`/`delete` → flushed
 //! by `commit(serial)`) is preserved from the original implementation.
 
-use app::{App, Module, Resource, Res, ResMut};
+use app::{App, Module, Res, ResMut, Resource};
 use wayland::{
-    Globals, Interface, Wayland,
-    WlSeat,
-    ZwpInputMethodManagerV2, ZwpInputMethodV2, ZwpInputMethodV2Event,
-    ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint, ZwpTextInputV3ContentPurpose,
+    Globals, Interface, Wayland, WlSeat, ZwpInputMethodManagerV2, ZwpInputMethodV2,
+    ZwpInputMethodV2Event, ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint,
+    ZwpTextInputV3ContentPurpose,
 };
 
 /// The text-input context the compositor reports for the focused field.
@@ -222,7 +221,12 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
             st.pending.active = false;
             tracing::info!("input-method: deactivate (pending)");
         }
-        ZwpInputMethodV2Event::SurroundingText { text, cursor, anchor, .. } => {
+        ZwpInputMethodV2Event::SurroundingText {
+            text,
+            cursor,
+            anchor,
+            ..
+        } => {
             st.pending.surrounding = SurroundingText {
                 text: text.clone(),
                 cursor: *cursor,

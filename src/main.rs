@@ -16,8 +16,8 @@
 
 #![recursion_limit = "1024"]
 
-use mecha_wayland::prelude::*;
 use app::Resource;
+use mecha_wayland::prelude::*;
 
 mod input_method;
 mod layout;
@@ -71,9 +71,15 @@ fn roles_for(kind: KeyKind, latched: bool) -> (ColorRole, ColorRole) {
     }
     match kind {
         KeyKind::Normal => (ColorRole::SurfaceContainerHigh, ColorRole::OnSurface),
-        KeyKind::Modifier => (ColorRole::SecondaryContainer, ColorRole::OnSecondaryContainer),
+        KeyKind::Modifier => (
+            ColorRole::SecondaryContainer,
+            ColorRole::OnSecondaryContainer,
+        ),
         KeyKind::Action => (ColorRole::PrimaryContainer, ColorRole::OnPrimaryContainer),
-        KeyKind::Space => (ColorRole::SurfaceContainerHighest, ColorRole::OnSurfaceVariant),
+        KeyKind::Space => (
+            ColorRole::SurfaceContainerHighest,
+            ColorRole::OnSurfaceVariant,
+        ),
     }
 }
 
@@ -108,8 +114,10 @@ impl Widget for Key {
         let kind = kind_of(&b.key.action);
         let (bg_role, fg_role) = roles_for(kind, false);
 
-        *s.component_mut::<LayoutStyle>(me).unwrap() =
-            LayoutStyle::default().center().grow(grow_weight(&b.key)).padding_all(px(2.0));
+        *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
+            .center()
+            .grow(grow_weight(&b.key))
+            .padding_all(px(2.0));
 
         *s.component_mut::<Paint>(me).unwrap() =
             Paint::Quad(Quad::new(s.color(bg_role)).radius(6.0));
@@ -167,8 +175,11 @@ impl Widget for Keyboard {
     type Builder = KeyboardBuilder;
     fn build(b: KeyboardBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         // Keyboard container: column filling the window, surface background.
-        *s.component_mut::<LayoutStyle>(me).unwrap() =
-            LayoutStyle::default().column().fill().gap(px(4.0)).padding_all(px(4.0));
+        *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
+            .column()
+            .fill()
+            .gap(px(4.0))
+            .padding_all(px(4.0));
         *s.component_mut::<Paint>(me).unwrap() =
             Paint::Quad(Quad::new(s.color(ColorRole::Surface)));
 
@@ -301,7 +312,10 @@ fn latched_mask(ctx: &Context<'_, Keyboard>) -> u32 {
 /// was sent (IM bound + active). Uses `Context`'s resource access — borrows each
 /// resource sequentially to avoid conflicts.
 fn im_commit_text(ctx: &mut Context<'_, Keyboard>, text: &str) -> bool {
-    if !ctx.resource::<input_method::InputMethodState>().should_commit() {
+    if !ctx
+        .resource::<input_method::InputMethodState>()
+        .should_commit()
+    {
         return false;
     }
     // Stage the commit string + copy out the IM object (Copy) and serial.
@@ -310,7 +324,9 @@ fn im_commit_text(ctx: &mut Context<'_, Keyboard>, text: &str) -> bool {
         st.stage_commit_string(text);
         (st.input_method, st.serial)
     };
-    let Some(im) = im_obj else { return false; };
+    let Some(im) = im_obj else {
+        return false;
+    };
     // Send the requests via Wayland.
     let mut wl = ctx.resource_mut::<Wayland>();
     im.commit_string(&mut wl, text);
@@ -337,14 +353,26 @@ fn vk_emit_keysym(ctx: &mut Context<'_, Keyboard>, ks: xkbcommon::xkb::Keysym, l
     };
     let mods = stroke.mods | latched_mask;
     let time = (std::time::Instant::now()
-        - ctx.resource::<virtual_keyboard::VirtualKeyboardState>().start_time)
+        - ctx
+            .resource::<virtual_keyboard::VirtualKeyboardState>()
+            .start_time)
         .as_millis() as u32;
     let mut wl = ctx.resource_mut::<Wayland>();
     if mods != 0 {
         vkbd.modifiers(&mut wl, mods, 0, 0, 0);
     }
-    vkbd.key(&mut wl, time, stroke.code, u32::from(WlKeyboardKeyState::Pressed));
-    vkbd.key(&mut wl, time, stroke.code, u32::from(WlKeyboardKeyState::Released));
+    vkbd.key(
+        &mut wl,
+        time,
+        stroke.code,
+        u32::from(WlKeyboardKeyState::Pressed),
+    );
+    vkbd.key(
+        &mut wl,
+        time,
+        stroke.code,
+        u32::from(WlKeyboardKeyState::Released),
+    );
     if mods != 0 {
         vkbd.modifiers(&mut wl, 0, 0, 0, 0);
     }
@@ -395,7 +423,9 @@ fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
     let bg = ctx.color(bg_role);
     let keys = ctx.me().ctrl_keys.clone();
     for k in keys {
-        ctx.at(k).unwrap().set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
+        ctx.at(k)
+            .unwrap()
+            .set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
         // The label colour is handled by the on_theme handler on the next
         // theme change; the paint update here is the important visual cue.
     }
@@ -437,7 +467,13 @@ impl Widget for Shell {
             (role,),
         );
 
-        s.spawn(win, KeyboardBuilder { font: b.font, keymap: b.keymap });
+        s.spawn(
+            win,
+            KeyboardBuilder {
+                font: b.font,
+                keymap: b.keymap,
+            },
+        );
         Shell
     }
 }
