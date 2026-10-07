@@ -16,7 +16,6 @@
 
 #![recursion_limit = "1024"]
 
-use app::Resource;
 use mecha_wayland::prelude::*;
 
 mod input_method;

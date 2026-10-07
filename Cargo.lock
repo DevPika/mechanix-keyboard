@@ -437,6 +437,7 @@ dependencies = [
  "gles",
  "interactivity",
  "layout",
+ "mechanix-widgets",
  "paint",
  "presentation",
  "render",
@@ -452,15 +453,27 @@ dependencies = [
 name = "mechanix-keyboard"
 version = "0.1.0"
 dependencies = [
- "app",
  "mecha-wayland",
  "rustix",
  "serde",
  "tracing",
  "tracing-subscriber",
- "wayland",
  "xkbcommon",
  "yaml_serde",
+]
+
+[[package]]
+name = "mechanix-widgets"
+version = "0.1.0"
+dependencies = [
+ "app",
+ "atlas",
+ "geometry",
+ "interactivity",
+ "layout",
+ "paint",
+ "theme",
+ "widgets",
 ]
 
 [[package]]

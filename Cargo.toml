@@ -5,8 +5,6 @@ edition = "2024"
 
 [dependencies]
 mecha-wayland = { path = "../mecha-wayland" }
-app           = { path = "../mecha-wayland/crates/app" }
-wayland       = { path = "../mecha-wayland/crates/wayland" }
 
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
