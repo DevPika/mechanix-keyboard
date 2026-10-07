@@ -13,15 +13,17 @@ use std::collections::HashMap;
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Instant;
 
-use app::{App, Module, Resource};
+// use app::{App, Module, Resource};
 use rustix::fs::{MemfdFlags, SealFlags};
 use rustix::mm::{MapFlags, ProtFlags};
-use wayland::{
-    Globals, Interface, Wayland, WlKeyboardKeymapFormat, WlSeat, ZwpVirtualKeyboardManagerV1,
-    ZwpVirtualKeyboardV1,
-};
+// use wayland::{
+//     Globals, Interface, Wayland, WlKeyboardKeymapFormat, WlSeat, ZwpVirtualKeyboardManagerV1,
+//     ZwpVirtualKeyboardV1,
+// };
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
+
+use mecha_wayland::prelude::*;
 
 /// One resolved keystroke: the evdev keycode to press plus the modifier mask to
 /// hold while pressing it.
@@ -85,7 +87,7 @@ fn init(app: &mut App) {
         .find(ZwpVirtualKeyboardManagerV1::NAME)
         .cloned()
         .map(|g| {
-            let (globals, mut wl) = app.query::<(app::Res<Globals>, app::ResMut<Wayland>)>();
+            let (globals, mut wl) = app.query::<(Res<Globals>, ResMut<Wayland>)>();
             globals.bind::<ZwpVirtualKeyboardManagerV1>(&g, &mut wl)
         });
 

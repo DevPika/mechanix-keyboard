@@ -9,12 +9,14 @@
 //! applied context; outbound staged `commit_string`/`preedit`/`delete` → flushed
 //! by `commit(serial)`) is preserved from the original implementation.
 
-use app::{App, Module, Res, ResMut, Resource};
-use wayland::{
-    Globals, Interface, Wayland, WlSeat, ZwpInputMethodManagerV2, ZwpInputMethodV2,
-    ZwpInputMethodV2Event, ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint,
-    ZwpTextInputV3ContentPurpose,
-};
+// use app::{App, Module, Res, ResMut, Resource};
+// use wayland::{
+//     Globals, Interface, Wayland, WlSeat, ZwpInputMethodManagerV2, ZwpInputMethodV2,
+//     ZwpInputMethodV2Event, ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint,
+//     ZwpTextInputV3ContentPurpose,
+// };
+
+use mecha_wayland::prelude::*;
 
 /// The text-input context the compositor reports for the focused field.
 ///

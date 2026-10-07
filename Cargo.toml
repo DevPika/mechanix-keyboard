@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mecha-wayland = { path = "../mecha-wayland" }
-app           = { path = "../mecha-wayland/crates/app" }
-wayland       = { path = "../mecha-wayland/crates/wayland" }
+mecha-wayland = {
+	git = "https://github.com/indegrowl/mecha-wayland.git",
+	branch = "dev"
+}
 
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

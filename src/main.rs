@@ -16,7 +16,6 @@
 
 #![recursion_limit = "1024"]
 
-use app::Resource;
 use mecha_wayland::prelude::*;
 
 mod input_method;
@@ -95,7 +94,7 @@ fn grow_weight(key: &layout::Key) -> f32 {
 ///
 /// The key's `Clicked` handler dispatches its `KeyAction` through the virtual
 /// keyboard / input method / view-switch logic.
-struct Key;
+struct Key { label: Handle<Text> }
 
 struct KeyBuilder {
     font: FontId,
@@ -141,7 +140,7 @@ impl Widget for Key {
             ctx.at(label).unwrap().set_color(fg);
         });
 
-        Key
+        Key { label }
     }
 }
 
@@ -419,13 +418,17 @@ fn toggle_latch(ctx: &mut Context<'_, Keyboard>) {
 /// Repaint all Ctrl keys to reflect the current latched state.
 fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
     let latched = ctx.resource::<LatchedState>().ctrl;
-    let (bg_role, _fg_role) = roles_for(KeyKind::Modifier, latched);
+    let (bg_role, fg_role) = roles_for(KeyKind::Modifier, latched);
     let bg = ctx.color(bg_role);
+    let fg = ctx.color(fg_role);
+
     let keys = ctx.me().ctrl_keys.clone();
     for k in keys {
-        ctx.at(k)
-            .unwrap()
-            .set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
+		  let mut key = ctx.at(k).unwrap();
+		  let label = key.me().label;
+
+        key.set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
+		  ctx.at(label).unwrap().set_color(fg);
         // The label colour is handled by the on_theme handler on the next
         // theme change; the paint update here is the important visual cue.
     }
