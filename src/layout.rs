@@ -1,3 +1,6 @@
+use crate::key_style::{self, KeyLook, KeyStyle, KeyStyleSpec};
+use crate::{color_role, shape, spacing};
+use mecha_wayland::prelude::{ColorRole, ThemeMode};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::{env, fs};
@@ -28,10 +31,29 @@ impl Rect {
 
 #[derive(Debug, Deserialize)]
 struct Layout {
+    #[serde(default)]
+    keyboard: KeyboardSpec,
+    /// Named key colour styles; a button picks one with `key_style:`.
+    #[serde(default)]
+    key_styles: HashMap<String, KeyStyleSpec>,
     outlines: HashMap<String, Outline>,
     views: HashMap<String, Vec<String>>,
     #[serde(default)]
     buttons: HashMap<String, Button>,
+}
+
+/// Applies to the entire keyboard container layout
+#[derive(Debug, Default, Deserialize)]
+struct KeyboardSpec {
+    mode: Option<String>,
+    background: Option<String>,
+    radius: Option<String>,
+    gap: Option<f32>,
+    #[serde(rename = "row-gap")]
+    row_gap: Option<f32>,
+    padding: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -73,6 +95,7 @@ struct Button {
     #[serde(default)]
     action: Option<ActionSpec>,
     modifier: Option<String>,
+    key_style: Option<String>,
 }
 
 /// Size used when a button names an outline that isn't defined (and no
@@ -85,6 +108,111 @@ const FALLBACK_OUTLINE: Outline = Outline {
 #[derive(Debug)]
 pub struct Keymap {
     pub views: Vec<View>,
+    pub keyboard: KeyboardStyle,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KeyboardStyle {
+    pub mode: ThemeMode,
+    pub background_color: ColorRole,
+    /// Key corner radius in logical px, resolved from a `Shape` token.
+    pub radius: f32,
+    /// Spacing in logical px, each resolved from a `Spacing` token.
+    pub gap: f32,
+    pub row_gap: f32,
+    pub padding: f32,
+    /// Window width in logical px; `None` spans the whole output.
+    pub width: Option<f32>,
+    /// Window height in logical px.
+    pub height: f32,
+}
+
+impl Default for KeyboardStyle {
+    fn default() -> Self {
+        Self {
+            mode: ThemeMode::Dark,
+            background_color: ColorRole::Surface,
+            radius: 6.0,
+            gap: 4.0,
+            row_gap: 4.0,
+            padding: 4.0,
+            width: None,
+            height: 280.0,
+        }
+    }
+}
+
+/// Keep a window dimension only if it's a positive size, warning otherwise.
+fn positive(field: &str, value: Option<f32>) -> Option<f32> {
+    value.filter(|&px| {
+        let ok = px > 0.0;
+        if !ok {
+            warn!("keyboard {field} {px} must be greater than 0; using the default");
+        }
+        ok
+    })
+}
+
+/// Resolve an optional `Spacing` token to px, warning and keeping `default`
+/// for a value that isn't a token.
+fn resolve_spacing(field: &str, value: Option<f32>, default: f32) -> f32 {
+    match value {
+        None => default,
+        Some(px) => match spacing::from_px(px) {
+            Some(token) => token.dp(),
+            None => {
+                warn!("keyboard {field} {px} is not a spacing token; using {default}");
+                default
+            }
+        },
+    }
+}
+
+impl KeyboardStyle {
+    /// Resolve the raw `keyboard:` block; an unrecognised value warns and
+    /// keeps its default.
+    fn resolve(spec: &KeyboardSpec) -> Self {
+        let default = Self::default();
+        let mode = match spec.mode.as_deref() {
+            None => default.mode,
+            Some("dark") => ThemeMode::Dark,
+            Some("light") => ThemeMode::Light,
+            Some(other) => {
+                warn!(
+                    "keyboard mode {other:?} is unknown (expected `dark` or `light`); using dark"
+                );
+                default.mode
+            }
+        };
+        let background_color = match spec.background.as_deref() {
+            None => default.background_color,
+            Some(name) => color_role::from_name(name).unwrap_or_else(|| {
+                warn!("keyboard background {name:?} is not a colour role; using `surface`");
+                default.background_color
+            }),
+        };
+        let radius = match spec.radius.as_deref() {
+            None => default.radius,
+            Some(name) => match shape::from_name(name) {
+                // No component height is needed: `full` isn't accepted.
+                Some(shape) => shape.resolve_radius_dp(0.0),
+                None => {
+                    warn!("keyboard radius {name:?} is not a shape token; using the default");
+                    default.radius
+                }
+            },
+        };
+        Self {
+            mode,
+            background_color,
+            radius,
+            gap: resolve_spacing("gap", spec.gap, default.gap),
+            row_gap: resolve_spacing("row-gap", spec.row_gap, default.row_gap),
+            padding: resolve_spacing("padding", spec.padding, default.padding),
+            width: positive("width", spec.width),
+            height: positive("height", spec.height).unwrap_or(default.height),
+        }
+    }
 }
 
 /// One selectable arrangement of keys (e.g. `base`, `upper`).
@@ -142,6 +270,9 @@ pub struct Key {
     pub action: KeyAction,
     pub rect: Rect,
     pub touch_area: Rect,
+    /// Colours per `KeyState`, from the button's `key_style:` (or `normal`)
+    /// and the `latched` style.
+    pub look: KeyLook,
 }
 
 impl Key {
@@ -205,12 +336,14 @@ impl Keymap {
     /// Convert a parsed squeekboard layout into the IR, resolving each key's
     /// label and geometry.
     fn from_layout(layout: &Layout) -> Self {
+        let styles = key_style::resolve_all(&layout.key_styles);
         let views = layout
             .views
             .iter()
-            .map(|(name, rows)| View::resolve(layout, name, rows))
+            .map(|(name, rows)| View::resolve(layout, &styles, name, rows))
             .collect();
-        Keymap { views }
+        let keyboard = KeyboardStyle::resolve(&layout.keyboard);
+        Keymap { views, keyboard }
     }
 }
 
@@ -221,9 +354,14 @@ impl View {
     /// Keys butt together left-to-right with no gap; each row's height is the
     /// max key height in it; rows stack top-down; and each row is centred
     /// within the view's width (the widest row), matching squeekboard's look.
-    fn resolve(layout: &Layout, name: &str, rows: &[String]) -> View {
-        // Pass 1: resolve face + action + size for every key, grouped by row.
-        let sized: Vec<Vec<(KeyFace, KeyAction, Outline)>> = rows
+    fn resolve(
+        layout: &Layout,
+        styles: &HashMap<String, KeyStyle>,
+        name: &str,
+        rows: &[String],
+    ) -> View {
+        // Pass 1: resolve face + action + size + look for every key, grouped by row.
+        let sized: Vec<Vec<(KeyFace, KeyAction, Outline, KeyLook)>> = rows
             .iter()
             .map(|row| {
                 row.split_whitespace()
@@ -232,7 +370,12 @@ impl View {
                         let outline = resolve_outline(layout, button);
                         let face = resolve_face(token, button);
                         let action = resolve_action(token, button);
-                        (face, action, outline)
+                        let look = KeyLook::for_button(
+                            styles,
+                            token,
+                            button.and_then(|b| b.key_style.as_deref()),
+                        );
+                        (face, action, outline, look)
                     })
                     .collect()
             })
@@ -241,25 +384,29 @@ impl View {
         // The view is as wide as its widest row.
         let view_width = sized
             .iter()
-            .map(|row| row.iter().map(|(_, _, o)| o.width).sum::<f32>())
+            .map(|row| row.iter().map(|(_, _, o, _)| o.width).sum::<f32>())
             .fold(0.0_f32, f32::max);
 
         // Pass 2: flow each row, centred, stacking downward.
         let mut y = 0.0_f32;
         let mut out_rows = Vec::with_capacity(sized.len());
         for row in &sized {
-            let row_width: f32 = row.iter().map(|(_, _, o)| o.width).sum();
-            let row_height = row.iter().map(|(_, _, o)| o.height).fold(0.0_f32, f32::max);
+            let row_width: f32 = row.iter().map(|(_, _, o, _)| o.width).sum();
+            let row_height = row
+                .iter()
+                .map(|(_, _, o, _)| o.height)
+                .fold(0.0_f32, f32::max);
             let mut x = (view_width - row_width) / 2.0;
             let keys = row
                 .iter()
-                .map(|(face, action, o)| {
+                .map(|(face, action, o, look)| {
                     let rect = Rect::new(x, y, o.width, o.height);
                     let key = Key {
                         face: face.clone(),
                         action: action.clone(),
                         rect,
                         touch_area: rect,
+                        look: *look,
                     };
                     x += o.width;
                     key
@@ -570,8 +717,9 @@ mod tests {
             .keys()
             .filter(|k| matches!(k.action, KeyAction::EmitKeysym(_) | KeyAction::EmitText(_)))
             .count();
+        // 26 letters plus `, . space ⌫ DONE` in the Figma 4-row layout.
         assert!(
-            typeable >= 40,
+            typeable >= 31,
             "base view should have many typeable keys, got {typeable}"
         );
     }
