@@ -1,17 +1,15 @@
 //! mechanix-keyboard — an on-screen keyboard built with themed widgets on the
-//! new mecha-wayland UI core.
+//! mecha-wayland UI core.
 //!
-//! This is the successor to the old standalone OSK that issued raw render
-//! commands (`DrawRect` / `DrawText` / `DrawMonochromeSprite`) and managed its
-//! own dmabuf slots. The new version builds a tree of themed `Widget` nodes:
-//! each key is a `Key` widget whose background, label colour, and corner radius
-//! come from `MechanixTheme` / `ColorRole`, and whose `on_theme` callback
-//! re-resolves them instantly when the user toggles dark/light at runtime.
+//! Builds a tree of themed `Widget` nodes: each key is a `Key` widget whose
+//! background, label colour, and corner radius come from `MechanixTheme` /
+//! `ColorRole`, and whose `on_theme` callback re-resolves them instantly when
+//! the user toggles dark/light at runtime.
 //!
 //! The keymap (parsed from `resources/layout.yaml` by `layout.rs`) drives which
 //! keys appear and what they do. View switching (Shift_L `locking`,
 //! `show_symbols`, `show_eschars`) and one-shot modifier latching (Ctrl) are
-//! preserved. Text keys commit through `zwp_input_method_v2` when a text input
+//! supported. Text keys commit through `zwp_input_method_v2` when a text input
 //! is focused, falling back to `zwp_virtual_keyboard_v1` keysym transport.
 
 #![recursion_limit = "1024"]
@@ -473,11 +471,13 @@ fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
 
 // ── Shell widget (layer-shell window) ─────────────────────────────────────
 
-/// Spawns a `zwlr_layer_surface` anchored to the bottom edge of the output,
-/// stretched full-width (left + right anchors), with an exclusive zone so the
-/// compositor reserves space and no other client's content is hidden behind
-/// the keyboard. `KeyboardInteractivity::OnDemand` lets the user tap keys
-/// without the OSK stealing keyboard focus from the focused app.
+/// Spawns a `zwlr_layer_surface` anchored to the bottom edge of the output.
+/// When no fixed width is configured it is stretched full-width (left + right
+/// anchors); otherwise it is anchored to the bottom only at the configured
+/// width. An exclusive zone of `-1` lets the surface overlap other content
+/// without reserving compositor space. `KeyboardInteractivity::None` keeps the
+/// OSK from stealing keyboard focus from the focused app; pointer taps on the
+/// layer surface are still delivered.
 struct Shell;
 
 struct ShellBuilder {
