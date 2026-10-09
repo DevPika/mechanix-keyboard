@@ -18,10 +18,15 @@
 
 use mecha_wayland::prelude::*;
 
+mod color_role;
 mod input_method;
+mod key_style;
 mod layout;
+mod shape;
+mod spacing;
 mod virtual_keyboard;
 
+use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, Keymap};
 
 /// The keymap view shown when the keyboard first appears.
@@ -64,22 +69,31 @@ fn kind_of(action: &KeyAction) -> KeyKind {
 
 /// Resolve a `KeyKind` to its (background, foreground) colour roles. A latched
 /// modifier uses the `Primary` palette so the armed state reads at a glance.
-fn roles_for(kind: KeyKind, latched: bool) -> (ColorRole, ColorRole) {
-    if latched {
-        return (ColorRole::Primary, ColorRole::OnPrimary);
+fn roles_for(kind: KeyKind, state: KeyState) -> (ColorRole, ColorRole) {
+    match state {
+        KeyState::Latched => (ColorRole::Primary, ColorRole::OnPrimary),
+        KeyState::Normal => match kind {
+            KeyKind::Normal => (ColorRole::SurfaceContainerHigh, ColorRole::OnSurface),
+            KeyKind::Modifier => (
+                ColorRole::SecondaryContainer,
+                ColorRole::OnSecondaryContainer,
+            ),
+            KeyKind::Action => (ColorRole::PrimaryContainer, ColorRole::OnPrimaryContainer),
+            KeyKind::Space => (
+                ColorRole::SurfaceContainerHighest,
+                ColorRole::OnSurfaceVariant,
+            ),
+        },
     }
-    match kind {
-        KeyKind::Normal => (ColorRole::SurfaceContainerHigh, ColorRole::OnSurface),
-        KeyKind::Modifier => (
-            ColorRole::SecondaryContainer,
-            ColorRole::OnSecondaryContainer,
-        ),
-        KeyKind::Action => (ColorRole::PrimaryContainer, ColorRole::OnPrimaryContainer),
-        KeyKind::Space => (
-            ColorRole::SurfaceContainerHighest,
-            ColorRole::OnSurfaceVariant,
-        ),
-    }
+}
+
+fn key_roles(look: KeyLook, kind: KeyKind, state: KeyState) -> (ColorRole, ColorRole) {
+    let style = look.style(state);
+    let (bg, fg) = roles_for(kind, state);
+    (
+        style.background.unwrap_or(bg),
+        style.foreground.unwrap_or(fg),
+    )
 }
 
 /// The flex-grow weight for a key, derived from its outline width relative to
@@ -96,6 +110,7 @@ fn grow_weight(key: &layout::Key) -> f32 {
 /// keyboard / input method / view-switch logic.
 struct Key {
     label: Handle<Text>,
+    look: KeyLook,
 }
 
 struct KeyBuilder {
@@ -103,6 +118,7 @@ struct KeyBuilder {
     key: layout::Key,
     /// Index of the view this key belongs to, for the latched-state check.
     view_index: usize,
+    radius: f32,
 }
 
 impl Build for KeyBuilder {
@@ -113,7 +129,9 @@ impl Widget for Key {
     type Builder = KeyBuilder;
     fn build(b: KeyBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         let kind = kind_of(&b.key.action);
-        let (bg_role, fg_role) = roles_for(kind, false);
+        let look = b.key.look;
+        let (bg_role, fg_role) = key_roles(look, kind, KeyState::Normal);
+        let radius = b.radius;
 
         *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
             .center()
@@ -121,7 +139,7 @@ impl Widget for Key {
             .padding_all(px(2.0));
 
         *s.component_mut::<Paint>(me).unwrap() =
-            Paint::Quad(Quad::new(s.color(bg_role)).radius(6.0));
+            Paint::Quad(Quad::new(s.color(bg_role)).radius(radius));
 
         let label = s.spawn(
             me,
@@ -130,19 +148,17 @@ impl Widget for Key {
                 .size(16),
         );
 
-        // Re-resolve colours on theme change. A latched modifier key gets the
-        // armed (Primary) palette instead of its normal one.
         let is_latch = matches!(b.key.action, KeyAction::LatchModifier(_));
         s.on_theme(me, move |ctx| {
-            let latched = is_latch && ctx.resource::<LatchedState>().ctrl;
-            let (bg_role, fg_role) = roles_for(kind, latched);
+            let state = KeyState::latched_if(is_latch && ctx.resource::<LatchedState>().ctrl);
+            let (bg_role, fg_role) = key_roles(look, kind, state);
             let bg = ctx.color(bg_role);
             let fg = ctx.color(fg_role);
-            ctx.set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
+            ctx.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
             ctx.at(label).unwrap().set_color(fg);
         });
 
-        Key { label }
+        Key { label, look }
     }
 }
 
@@ -176,16 +192,18 @@ impl Widget for Keyboard {
     type Builder = KeyboardBuilder;
     fn build(b: KeyboardBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         // Keyboard container: column filling the window, surface background.
+        // Its gap only separates views, and just one view is ever shown.
+        let style = b.keymap.keyboard;
         *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
             .column()
             .fill()
-            .gap(px(4.0))
-            .padding_all(px(4.0));
-        *s.component_mut::<Paint>(me).unwrap() =
-            Paint::Quad(Quad::new(s.color(ColorRole::Surface)));
+            .gap(px(style.row_gap))
+            .padding_all(px(style.padding));
+        let bg_role = b.keymap.keyboard.background_color;
+        *s.component_mut::<Paint>(me).unwrap() = Paint::Quad(Quad::new(s.color(bg_role)));
 
         s.on_theme(me, move |ctx| {
-            let bg = ctx.color(ColorRole::Surface);
+            let bg = ctx.color(bg_role);
             ctx.set_paint(Paint::Quad(Quad::new(bg)));
         });
 
@@ -197,9 +215,16 @@ impl Widget for Keyboard {
 
         for (vi, view) in b.keymap.views.iter().enumerate() {
             let view_style = if vi == initial_view {
-                LayoutStyle::default().column().fill().gap(px(4.0))
+                LayoutStyle::default()
+                    .column()
+                    .fill()
+                    .gap(px(style.row_gap))
             } else {
-                LayoutStyle::default().column().fill().gap(px(4.0)).hidden()
+                LayoutStyle::default()
+                    .column()
+                    .fill()
+                    .gap(px(style.row_gap))
+                    .hidden()
             };
             let view_div = s.spawn(me, div().style(view_style));
             view_nodes.push(view_div);
@@ -207,7 +232,7 @@ impl Widget for Keyboard {
             for row in &view.rows {
                 let row_div = s.spawn(
                     view_div,
-                    div().style(LayoutStyle::default().row().fill().gap(px(4.0))),
+                    div().style(LayoutStyle::default().row().fill().gap(px(style.gap))),
                 );
 
                 for key in &row.keys {
@@ -218,6 +243,7 @@ impl Widget for Keyboard {
                             font: b.font,
                             key: key.clone(),
                             view_index: vi,
+                            radius: b.keymap.keyboard.radius,
                         },
                     );
 
@@ -419,17 +445,18 @@ fn toggle_latch(ctx: &mut Context<'_, Keyboard>) {
 
 /// Repaint all Ctrl keys to reflect the current latched state.
 fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
-    let latched = ctx.resource::<LatchedState>().ctrl;
-    let (bg_role, fg_role) = roles_for(KeyKind::Modifier, latched);
-    let bg = ctx.color(bg_role);
-    let fg = ctx.color(fg_role);
+    let state = KeyState::latched_if(ctx.resource::<LatchedState>().ctrl);
+    let radius = ctx.me().keymap.keyboard.radius;
 
     let keys = ctx.me().ctrl_keys.clone();
     for k in keys {
         let mut key = ctx.at(k).unwrap();
-        let label = key.me().label;
+        let (label, look) = (key.me().label, key.me().look);
+        let (bg_role, fg_role) = key_roles(look, KeyKind::Modifier, state);
+        let bg = key.color(bg_role);
+        let fg = key.color(fg_role);
 
-        key.set_paint(Paint::Quad(Quad::new(bg).radius(6.0)));
+        key.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
         ctx.at(label).unwrap().set_color(fg);
         // The label colour is handled by the on_theme handler on the next
         // theme change; the paint update here is the important visual cue.
@@ -458,9 +485,14 @@ impl Build for ShellBuilder {
 impl Widget for Shell {
     type Builder = ShellBuilder;
     fn build(b: ShellBuilder, _me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
+        let style = b.keymap.keyboard;
+        let (anchor, width) = match style.width {
+            Some(w) => (Anchor::BOTTOM, px(w)),
+            _ => (Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT, auto()),
+        };
         let role = Role::Layer(LayerRole {
             layer: Layer::Top,
-            anchor: Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+            anchor,
             exclusive_zone: -1,
             namespace: "mechanix-keyboard".into(),
             keyboard_interactivity: KeyboardInteractivity::None,
@@ -468,7 +500,11 @@ impl Widget for Shell {
 
         let win = s.spawn_with(
             b.root,
-            window().layout(LayoutStyle::default().column().size(auto(), px(280.0))),
+            window().layout(
+                LayoutStyle::default()
+                    .column()
+                    .size(width, px(style.height)),
+            ),
             (role,),
         );
 
@@ -505,7 +541,11 @@ fn main() {
         .insert_resource(Atlas::new());
     app.insert_resource(LatchedState::default());
 
-    app.add_module(MechanixTheme::dark())
+    let theme = match keymap.keyboard.mode {
+        ThemeMode::Dark => MechanixTheme::dark(),
+        ThemeMode::Light => MechanixTheme::light(),
+    };
+    app.add_module(theme)
         .add_module(RingModule::default())
         .add_module(
             WaylandModule::new()
