@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mecha-wayland = { git = "https://github.com/indegrowl/mecha-wayland.git", branch = "dev" }
+mecha-wayland = { git = "https://github.com/DevPika/mecha-wayland.git", branch = "layer-resize" }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
