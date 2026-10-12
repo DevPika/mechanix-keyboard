@@ -62,14 +62,14 @@ views:
         - "1 2 3 4 5 6 7 9 0"
         - "q w e r t y u i o p"
         - "a s d f g h j k l Return"
-        - "Shift_L  z x c v b n m , ."
+        - "Shift_Terminal_L  z x c v b n m , ."
         - ": - _ space ← ↑ ↓ →"
     terminal_upper:
         - "Esc Ctrl Alt Tab | ~ ` / \\ BackSpace"
         - "1 2 3 4 5 6 7 9 0"
         - "Q W E R T Y U I O P"
         - "A S D F G H J K L Return"
-        - "Shift_L  Z X C V B N M , ."
+        - "Shift_Terminal_L  Z X C V B N M , ."
         - ": - _ space ← ↑ ↓ →"
 
 buttons:
@@ -79,6 +79,14 @@ buttons:
             locking:
                 lock_view: "upper"
                 unlock_view: "base"
+        outline: "altline"
+        icon: "key-shift-symbolic"
+    Shift_Terminal_L:
+        key_style: "function"
+        action:
+            locking:
+                lock_view: "terminal_upper"
+                unlock_view: "terminal"
         outline: "altline"
         icon: "key-shift-symbolic"
     Ctrl:
