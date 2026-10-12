@@ -29,7 +29,7 @@ use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, Keymap};
 
 /// The keymap view shown when the keyboard first appears.
-pub const INITIAL_VIEW: &str = "base";
+pub const INITIAL_VIEW: &str = "terminal";
 
 /// The debug visibility bar's height — also the collapsed surface height.
 ///
@@ -136,7 +136,9 @@ impl Widget for Key {
     fn build(b: KeyBuilder, me: Handle<Self>, s: &mut Spawner<'_, Self>) -> Self {
         let kind = kind_of(&b.key.action);
         let look = b.key.look;
+
         let (bg_role, fg_role) = key_roles(look, kind, KeyState::Normal);
+
         let radius = b.radius;
 
         *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
@@ -163,6 +165,23 @@ impl Widget for Key {
             ctx.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
             ctx.at(label).unwrap().set_color(fg);
         });
+
+        if !is_latch {
+            s.on::<Press>(me, move |ctx, _| {
+                let bg = ctx.color(bg_role);
+                let fg = ctx.color(fg_role);
+
+                ctx.at(label).unwrap().set_color(bg);
+                ctx.set_paint(Paint::Quad(Quad::new(fg).radius(radius)));
+            });
+            s.on::<Release>(me, move |ctx, _| {
+                let bg = ctx.color(bg_role);
+                let fg = ctx.color(fg_role);
+
+                ctx.at(label).unwrap().set_color(fg);
+                ctx.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
+            });
+        }
 
         Key { label, look }
     }
@@ -243,6 +262,7 @@ impl Widget for Keyboard {
 
                 for key in &row.keys {
                     let is_latch = matches!(&key.action, KeyAction::LatchModifier(_));
+
                     let key_handle = s.spawn(
                         row_div,
                         KeyBuilder {
@@ -260,6 +280,11 @@ impl Widget for Keyboard {
                     // Clone the action into the Clicked closure. Each key
                     // gets its own handler that dispatches through the
                     // Keyboard's action logic.
+
+                    /*
+                    NOTE: this is why action has to be handled here instead of
+                    in Key::build
+                    */
                     let action = key.action.clone();
                     s.on::<Clicked>(key_handle, move |ctx, _| {
                         dispatch(ctx, &action);
