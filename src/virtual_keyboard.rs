@@ -7,11 +7,12 @@
 //! Keycode emission lives in `vk_emit_keysym` in `main.rs`.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Write};
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Instant;
 
 use rustix::fs::{MemfdFlags, SealFlags};
-use rustix::mm::{MapFlags, ProtFlags};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
 
@@ -178,57 +179,57 @@ struct KeymapWithFd {
     size: u32,
 }
 
-/// Builds a sealed, shared memfd holding `text` as a NUL-terminated
-/// buffer, ready to send as `set_keymap`'s fd + size.
-fn make_keymap_fd(text: &[u8]) -> rustix::io::Result<KeymapWithFd> {
-    let size = text.len() + 1; // +1 for the trailing NUL the protocol expects
+/// Builds a sealed memfd holding `text` as a NUL-terminated buffer, ready to
+/// send as `set_keymap`'s fd + size.
+///
+/// The memfd is sealed against shrinking, growing and writing, so the
+/// compositor can safely `mmap` it without the contents changing under it.
+/// The Wayland wire layer dups the fd when the request is queued, so the
+/// returned `OwnedFd` can be dropped once `keymap` has been called.
+fn make_keymap_fd(text: &[u8]) -> io::Result<KeymapWithFd> {
+    // +1 for the trailing NUL the protocol expects.
+    let size = u32::try_from(text.len() + 1)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "keymap too large"))?;
 
-    let fd: OwnedFd = rustix::fs::memfd_create(
+    let fd = rustix::fs::memfd_create(
         c"mechanix-keyboard-keymap",
         MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
     )?;
 
-    rustix::fs::ftruncate(&fd, size as u64)?;
+    let mut file = File::from(fd);
+    file.write_all(text)?;
+    file.write_all(&[0])?;
+    let fd = OwnedFd::from(file);
 
-    // SAFETY: `fd` is a valid memfd truncated to `size` bytes; the mapping
-    // is unmapped (via the guard below) before this function returns, and
-    // nothing else touches `fd` concurrently.
-    let map = unsafe {
-        rustix::mm::mmap(
-            std::ptr::null_mut(),
-            size,
-            ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::SHARED,
-            &fd,
-            0,
-        )?
-    };
+    rustix::fs::fcntl_add_seals(
+        &fd,
+        SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE | SealFlags::SEAL,
+    )?;
 
-    struct MmapGuard(*mut core::ffi::c_void, usize);
-    impl Drop for MmapGuard {
-        fn drop(&mut self) {
-            // SAFETY: `munmap` is safe to call with a valid mapping and size.
-            unsafe {
-                let _ = rustix::mm::munmap(self.0, self.1);
-            }
-        }
+    Ok(KeymapWithFd { fd, size })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::FileExt;
+
+    #[test]
+    fn keymap_fd_holds_nul_terminated_text_and_is_sealed() {
+        let keymap = make_keymap_fd(b"xkb_keymap {}").unwrap();
+        assert_eq!(keymap.size, 14);
+
+        let file = File::from(keymap.fd);
+        let mut buf = vec![0; 14];
+        file.read_exact_at(&mut buf, 0).unwrap();
+        assert_eq!(buf, b"xkb_keymap {}\0");
+
+        let seals = rustix::fs::fcntl_get_seals(&file).unwrap();
+        assert!(
+            seals
+                .contains(SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE | SealFlags::SEAL)
+        );
+        assert!(file.write_at(b"x", 0).is_err());
+        assert!(file.set_len(0).is_err());
     }
-
-    let guard = MmapGuard(map, size);
-    // SAFETY: `map` is a valid mapping of `size` bytes from the memfd; writing
-    // the keymap text + NUL is within bounds.
-    unsafe {
-        std::ptr::copy_nonoverlapping(text.as_ptr(), map as *mut u8, text.len());
-        std::ptr::write_volatile(map.add(text.len()).cast::<u8>(), 0); // NUL terminator
-    }
-    drop(guard);
-
-    // Sealing is optional (best practice for shared memfds) but the specific
-    // rustix API for it varies by version; the keymap works without it.
-    let _ = SealFlags::all();
-
-    Ok(KeymapWithFd {
-        fd,
-        size: size as u32,
-    })
 }
