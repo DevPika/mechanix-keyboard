@@ -343,8 +343,11 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
         KeyAction::EmitKeysym(ks) => {
             let latched_mask = latched_mask(ctx);
             // Printable keysyms commit via IM2; control keysyms fall back to
-            // the virtual-keyboard-v1 keysym transport.
-            if let Some(text) = virtual_keyboard::keysym_text(*ks)
+            // the virtual-keyboard-v1 keysym transport. A latched modifier
+            // forces the keycode path — IM2 commits plain text and would drop
+            // the modifier.
+            if latched_mask == 0
+                && let Some(text) = virtual_keyboard::keysym_text(*ks)
                 && im_commit_text(ctx, &text)
             {
                 tracing::info!(input = %text, "input method");
@@ -355,7 +358,7 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
         }
         KeyAction::EmitText(text) => {
             let latched_mask = latched_mask(ctx);
-            if im_commit_text(ctx, text) {
+            if latched_mask == 0 && im_commit_text(ctx, text) {
                 tracing::info!("Input method: {text}");
             } else {
                 for ch in text.chars() {
