@@ -4,9 +4,9 @@
 //! conditionally from `Globals`, creates the `ZwpInputMethodV2` object, and
 //! registers a system for `ZwpInputMethodV2Event`.
 //!
-//! Inbound state is double-buffered: `activate`/`deactivate`/`done` events fill
-//! a pending context that is applied on `done`. Outbound edits are staged
-//! (`commit_string`/`preedit`/`delete`) and flushed by `commit(serial)`.
+//! Inbound state is double-buffered: `activate`/`deactivate`/`content_type`
+//! events fill a pending context that is applied on `done`. Surrounding text
+//! and change cause are not tracked yet.
 
 use mecha_wayland::prelude::*;
 
@@ -19,76 +19,21 @@ pub struct InputMethodContext {
     /// `true` once `activate` has applied (on a `done`); `false` after
     /// `deactivate` applies. Drives whether taps route through IM2.
     pub active: bool,
-    /// The last reported surrounding text, cursor, and selection anchor.
-    pub surrounding: SurroundingText,
-    /// Why the surrounding text last changed. Initial value is `InputMethod`.
-    pub change_cause: ZwpTextInputV3ChangeCause,
-    /// The focused field's content hint + purpose.
-    pub content_type: ContentType,
+    /// The focused field's content purpose; picks the view shown on activate.
+    pub purpose: ZwpTextInputV3ContentPurpose,
 }
 
 impl Default for InputMethodContext {
     fn default() -> Self {
         Self {
             active: false,
-            surrounding: SurroundingText::default(),
-            change_cause: ZwpTextInputV3ChangeCause::InputMethod,
-            content_type: ContentType::default(),
-        }
-    }
-}
-
-/// Surrounding-text slice reported by the text input (excluding any preedit).
-#[derive(Debug, Clone, Default)]
-pub struct SurroundingText {
-    pub text: String,
-    pub cursor: u32,
-    pub anchor: u32,
-    /// `true` once a `surrounding_text` event has been seen in the pending batch.
-    pub reported: bool,
-}
-
-/// Content type hint + purpose for the focused field.
-#[derive(Debug, Clone, Copy)]
-pub struct ContentType {
-    pub hint: ZwpTextInputV3ContentHint,
-    pub purpose: ZwpTextInputV3ContentPurpose,
-}
-
-impl Default for ContentType {
-    fn default() -> Self {
-        Self {
-            hint: ZwpTextInputV3ContentHint::empty(),
             purpose: ZwpTextInputV3ContentPurpose::Normal,
         }
     }
 }
 
-/// One staged preedit string.
-#[derive(Debug, Clone)]
-pub struct Preedit {
-    pub text: String,
-    pub cursor_begin: i32,
-    pub cursor_end: i32,
-}
-
-/// One staged surrounding-text deletion.
-#[derive(Debug, Clone, Copy)]
-pub struct DeleteSurrounding {
-    pub before: u32,
-    pub after: u32,
-}
-
-/// Outbound edits being staged for the next `commit`. Each field is `Option`,
-/// distinguishing "explicitly set this commit" from "leave at initial value".
-#[derive(Debug, Default)]
-pub struct PendingEdit {
-    pub commit_string: Option<String>,
-    pub preedit: Option<Preedit>,
-    pub delete: Option<DeleteSurrounding>,
-}
-
 /// All state the input-method-v2 client owns. Lives on the app as a `Resource`.
+#[derive(Default)]
 pub struct InputMethodState {
     /// The per-seat `zwp_input_method_v2` object; `None` until both the manager
     /// and a seat are available.
@@ -103,30 +48,8 @@ pub struct InputMethodState {
     /// `commit(serial)`.
     pub serial: u32,
 
-    /// Outbound edits staged since the last `commit`. Flushed by `flush`.
-    pub pending_edit: PendingEdit,
-
     /// `true` after `unavailable` — the object is inert.
     pub inert: bool,
-}
-
-impl Default for InputMethodState {
-    fn default() -> Self {
-        Self {
-            input_method: None,
-            current: InputMethodContext {
-                change_cause: ZwpTextInputV3ChangeCause::InputMethod,
-                ..Default::default()
-            },
-            pending: InputMethodContext {
-                change_cause: ZwpTextInputV3ChangeCause::InputMethod,
-                ..Default::default()
-            },
-            serial: 0,
-            pending_edit: PendingEdit::default(),
-            inert: false,
-        }
-    }
 }
 
 impl Resource for InputMethodState {}
@@ -136,13 +59,6 @@ impl InputMethodState {
     /// virtual-keyboard-v1 transport. True only when active and not inert.
     pub fn should_commit(&self) -> bool {
         !self.inert && self.input_method.is_some() && self.current.active
-    }
-
-    /// Stage a `commit_string` for the next flush.
-    pub fn stage_commit_string(&mut self, text: impl Into<String>) {
-        if !self.inert && self.input_method.is_some() {
-            self.pending_edit.commit_string = Some(text.into());
-        }
     }
 }
 
@@ -307,7 +223,6 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 // Activate resets all prior inbound state then arms active.
                 st.pending = InputMethodContext {
                     active: true,
-                    change_cause: ZwpTextInputV3ChangeCause::InputMethod,
                     ..Default::default()
                 };
                 tracing::info!("input-method: activate (pending)");
@@ -318,29 +233,10 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 tracing::info!("input-method: deactivate (pending)");
                 None
             }
-            ZwpInputMethodV2Event::SurroundingText {
-                text,
-                cursor,
-                anchor,
-                ..
-            } => {
-                st.pending.surrounding = SurroundingText {
-                    text: text.clone(),
-                    cursor: *cursor,
-                    anchor: *anchor,
-                    reported: true,
-                };
-                None
-            }
-            ZwpInputMethodV2Event::TextChangeCause { cause, .. } => {
-                st.pending.change_cause = *cause;
-                None
-            }
-            ZwpInputMethodV2Event::ContentType { hint, purpose, .. } => {
-                st.pending.content_type = ContentType {
-                    hint: *hint,
-                    purpose: *purpose,
-                };
+            ZwpInputMethodV2Event::SurroundingText { .. }
+            | ZwpInputMethodV2Event::TextChangeCause { .. } => None,
+            ZwpInputMethodV2Event::ContentType { purpose, .. } => {
+                st.pending.purpose = *purpose;
                 None
             }
             ZwpInputMethodV2Event::Done { .. } => {
@@ -351,13 +247,12 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 // check if the text box became active
                 let became_active = !st.current.active && st.pending.active;
                 // check if we have changed purpose
-                let purpose_changed =
-                    st.current.content_type.purpose != st.pending.content_type.purpose;
+                let purpose_changed = st.current.purpose != st.pending.purpose;
                 // only if we are actually active and we switched view, do the change
                 let should_switch_view = st.pending.active && (became_active || purpose_changed);
 
                 if should_switch_view {
-                    switch_to = Some(match st.pending.content_type.purpose {
+                    switch_to = Some(match st.pending.purpose {
                         ZwpTextInputV3ContentPurpose::Terminal => "terminal",
                         ZwpTextInputV3ContentPurpose::Number
                         | ZwpTextInputV3ContentPurpose::Digits => "number",
@@ -392,7 +287,7 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
             .widgets::<crate::Keyboard>()
             .map(|(id, _keyboard)| id)
             .collect();
-        app.emit(SwitchView { view: view }, targets);
+        app.emit(SwitchView { view }, targets);
     }
     if let Some(visible) = apply_visible {
         app.set_keyboard_visibility(visible);
@@ -401,5 +296,5 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
 
 // ── outbound edits ────────────────────────────────────────────────────────
 
-// Text commit is done by `im_commit_text` in main.rs, which stages the string
-// via `InputMethodState::stage_commit_string` and sends it over Wayland.
+// Text commit is done by `im_commit_text` in main.rs, which sends
+// `commit_string` + `commit(serial)` over Wayland.

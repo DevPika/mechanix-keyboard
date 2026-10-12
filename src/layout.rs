@@ -8,27 +8,6 @@ use std::{env, fs};
 use tracing::{info, warn};
 use xkbcommon::xkb::{self, Keysym};
 
-/// A simple 2D rectangle in layout units.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl Rect {
-    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
-        Self { x, y, w, h }
-    }
-    pub fn right(&self) -> f32 {
-        self.x + self.w
-    }
-    pub fn bottom(&self) -> f32 {
-        self.y + self.h
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct Layout {
     #[serde(default)]
@@ -59,10 +38,12 @@ struct KeyboardSpec {
     font_size: Option<u16>,
 }
 
+/// A button's size. Only the width is used — it sets the key's flex-grow
+/// weight within its row. Rows split the keyboard height evenly, so an
+/// outline's `height:` in the YAML is accepted but ignored.
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct Outline {
     width: f32,
-    height: f32,
 }
 
 /// A squeekboard button's `action:` value — either a bare name (`erase`,
@@ -103,10 +84,7 @@ struct Button {
 
 /// Size used when a button names an outline that isn't defined (and no
 /// `default` outline exists to fall back to). Keeps conversion total.
-const FALLBACK_OUTLINE: Outline = Outline {
-    width: 50.0,
-    height: 50.0,
-};
+const FALLBACK_OUTLINE: Outline = Outline { width: 50.0 };
 
 #[derive(Debug)]
 pub struct Keymap {
@@ -278,11 +256,10 @@ pub enum KeyAction {
     /// Flip between two named views by current view (squeekboard `locking`): go
     /// to `lock` normally, or back to `unlock` when `lock` is already current.
     ToggleView { lock: String, unlock: String },
-    /// Arm a real modifier (Control) for exactly the *next* keystroke, then it
-    /// auto-clears — the OSK one-shot latch. The modifier's mask is OR'd into the
-    /// next emitted Keystroke; tapping again disarms. Carries the squeekboard
-    /// modifier name (e.g. `Control`).
-    LatchModifier(String),
+    /// Arm Control for exactly the *next* keystroke, then it auto-clears — the
+    /// OSK one-shot latch. The modifier's mask is OR'd into the next emitted
+    /// Keystroke; tapping again disarms. Only Control is wired for now.
+    LatchModifier,
     /// A squeekboard action not wired this pass (prefs, and modifiers other than
     /// Control). The key still draws and hit-tests; tapping it logs but types
     /// nothing. Carries a name for that log.
@@ -294,34 +271,11 @@ pub enum KeyAction {
 pub struct Key {
     pub face: KeyFace,
     pub action: KeyAction,
-    pub rect: Rect,
-    pub touch_area: Rect,
+    /// The key's outline width (logical units).
+    pub width: f32,
     /// Colours per `KeyState`, from the button's `key_style:` (or `normal`)
     /// and the `latched` style.
     pub look: KeyLook,
-}
-
-impl Key {
-    /// A human-readable label for bring-up tracing (hover/tap). Icon keys log
-    /// their icon name.
-    pub fn display_label(&self) -> &str {
-        match &self.face {
-            KeyFace::Text(s) => s,
-            KeyFace::Icon(name) => name,
-        }
-    }
-
-    /// The text to render on the key: either the label or the icon name.
-    pub fn label_text(&self) -> &str {
-        self.display_label()
-    }
-}
-
-impl Row {
-    /// The row's keys.
-    pub fn keys(&self) -> &[Key] {
-        &self.keys
-    }
 }
 
 impl View {
@@ -329,25 +283,17 @@ impl View {
     pub fn keys(&self) -> impl Iterator<Item = &Key> {
         self.rows.iter().flat_map(|row| row.keys.iter())
     }
-
-    /// The view's intrinsic logical width: the right edge of its widest row.
-    pub fn width(&self) -> f32 {
-        self.keys().map(|k| k.rect.right()).fold(0.0_f32, f32::max)
-    }
-
-    /// The view's intrinsic logical height: the bottom edge of its last row.
-    pub fn height(&self) -> f32 {
-        self.keys().map(|k| k.rect.bottom()).fold(0.0_f32, f32::max)
-    }
 }
 
 impl Keymap {
     /// Every key in the keymap, flattened across every view.
+    #[cfg(test)]
     pub fn keys(&self) -> impl Iterator<Item = &Key> {
         self.views.iter().flat_map(|view| view.keys())
     }
 
-    /// Look a view up by name (e.g. the initial `base` view to render).
+    /// Look a view up by name.
+    #[cfg(test)]
     pub fn view(&self, name: &str) -> Option<&View> {
         self.views.iter().find(|v| v.name == name)
     }
@@ -359,7 +305,7 @@ impl Keymap {
     }
 
     /// Convert a parsed squeekboard layout into the IR, resolving each key's
-    /// label and geometry.
+    /// face, action, width and look.
     fn from_layout(layout: &Layout) -> Self {
         let styles = key_style::resolve_all(&layout.key_styles);
         let views = layout
@@ -373,27 +319,21 @@ impl Keymap {
 }
 
 impl View {
-    /// Resolve one view's rows into laid-out keys.
-    ///
-    /// Two passes: first resolve every key's face + outline, then flow them.
-    /// Keys butt together left-to-right with no gap; each row's height is the
-    /// max key height in it; rows stack top-down; and each row is centred
-    /// within the view's width (the widest row), matching squeekboard's look.
+    /// Resolve one view's rows into keys. Positioning is left to the flex
+    /// layout in main.rs; each key carries only its outline width.
     fn resolve(
         layout: &Layout,
         styles: &HashMap<String, KeyStyle>,
         name: &str,
         rows: &[String],
     ) -> View {
-        // Pass 1: resolve face + action + size + look for every key, grouped by row.
-        let sized: Vec<Vec<(KeyFace, KeyAction, Outline, KeyLook)>> = rows
+        let out_rows = rows
             .iter()
             .map(|row| {
-                row.split_whitespace()
+                let keys = row
+                    .split_whitespace()
                     .map(|token| {
                         let button = layout.buttons.get(token);
-                        let outline = resolve_outline(layout, button);
-                        let face = resolve_face(token, button);
                         let action = resolve_action(token, button);
                         let look = KeyLook::for_button(
                             styles,
@@ -401,46 +341,17 @@ impl View {
                             button.and_then(|b| b.key_style.as_deref()),
                             types_digit(&action),
                         );
-                        (face, action, outline, look)
+                        Key {
+                            face: resolve_face(token, button),
+                            action,
+                            width: resolve_outline(layout, button).width,
+                            look,
+                        }
                     })
-                    .collect()
+                    .collect();
+                Row { keys }
             })
             .collect();
-
-        // The view is as wide as its widest row.
-        let view_width = sized
-            .iter()
-            .map(|row| row.iter().map(|(_, _, o, _)| o.width).sum::<f32>())
-            .fold(0.0_f32, f32::max);
-
-        // Pass 2: flow each row, centred, stacking downward.
-        let mut y = 0.0_f32;
-        let mut out_rows = Vec::with_capacity(sized.len());
-        for row in &sized {
-            let row_width: f32 = row.iter().map(|(_, _, o, _)| o.width).sum();
-            let row_height = row
-                .iter()
-                .map(|(_, _, o, _)| o.height)
-                .fold(0.0_f32, f32::max);
-            let mut x = (view_width - row_width) / 2.0;
-            let keys = row
-                .iter()
-                .map(|(face, action, o, look)| {
-                    let rect = Rect::new(x, y, o.width, o.height);
-                    let key = Key {
-                        face: face.clone(),
-                        action: action.clone(),
-                        rect,
-                        touch_area: rect,
-                        look: *look,
-                    };
-                    x += o.width;
-                    key
-                })
-                .collect();
-            out_rows.push(Row { keys });
-            y += row_height;
-        }
 
         View {
             name: name.to_string(),
@@ -474,7 +385,7 @@ fn types_digit(action: &KeyAction) -> bool {
         }
         KeyAction::SetView(_)
         | KeyAction::ToggleView { .. }
-        | KeyAction::LatchModifier(_)
+        | KeyAction::LatchModifier
         | KeyAction::Unhandled(_) => None,
     };
     text.is_some_and(|c| c.is_ascii_digit())
@@ -519,7 +430,7 @@ fn resolve_action(token: &str, button: Option<&Button>) -> KeyAction {
         // every other modifier still defers to `Unhandled`.
         if let Some(m) = b.modifier.as_deref() {
             if m == "Control" {
-                return KeyAction::LatchModifier(m.to_string());
+                return KeyAction::LatchModifier;
             }
             return KeyAction::Unhandled(token.to_string());
         }
@@ -700,7 +611,7 @@ mod tests {
         let ctrl = button(|b| b.modifier = Some("Control".into()));
         assert!(matches!(
             resolve_action("Ctrl", Some(&ctrl)),
-            KeyAction::LatchModifier(m) if m == "Control"
+            KeyAction::LatchModifier
         ));
     }
 

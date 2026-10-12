@@ -60,17 +60,13 @@ enum KeyKind {
     Normal,
     /// Modifier / view-switch key (Shift, Ctrl, abc, Fn, …).
     Modifier,
-    /// Action key (Enter, Backspace).
-    Action,
-    /// Space — wide, low-emphasis.
-    Space,
 }
 
 /// Classify a key's action into a visual kind for theme colour selection.
 fn kind_of(action: &KeyAction) -> KeyKind {
     match action {
         KeyAction::EmitKeysym(_) | KeyAction::EmitText(_) => KeyKind::Normal,
-        KeyAction::LatchModifier(_) => KeyKind::Modifier,
+        KeyAction::LatchModifier => KeyKind::Modifier,
         KeyAction::SetView(_) | KeyAction::ToggleView { .. } => KeyKind::Modifier,
         KeyAction::Unhandled(_) => KeyKind::Modifier,
     }
@@ -86,11 +82,6 @@ fn roles_for(kind: KeyKind, state: KeyState) -> (ColorRole, ColorRole) {
             KeyKind::Modifier => (
                 ColorRole::SecondaryContainer,
                 ColorRole::OnSecondaryContainer,
-            ),
-            KeyKind::Action => (ColorRole::PrimaryContainer, ColorRole::OnPrimaryContainer),
-            KeyKind::Space => (
-                ColorRole::SurfaceContainerHighest,
-                ColorRole::OnSurfaceVariant,
             ),
         },
     }
@@ -108,7 +99,7 @@ fn key_roles(look: KeyLook, kind: KeyKind, state: KeyState) -> (ColorRole, Color
 /// The flex-grow weight for a key, derived from its outline width relative to
 /// the default 50px key.
 fn grow_weight(key: &layout::Key) -> f32 {
-    key.rect.w / 50.0
+    key.width / 50.0
 }
 
 /// A themed key button: a `div` with a `Paint::Quad` background resolved from
@@ -140,8 +131,6 @@ struct KeyBuilder {
     font: FontId,
     font_size: u16,
     key: layout::Key,
-    /// Index of the view this key belongs to, for the latched-state check.
-    view_index: usize,
     radius: f32,
 }
 
@@ -180,7 +169,7 @@ impl Widget for Key {
             }
         };
 
-        let is_latch = matches!(b.key.action, KeyAction::LatchModifier(_));
+        let is_latch = matches!(b.key.action, KeyAction::LatchModifier);
         s.on_theme(me, move |ctx| {
             let state = KeyState::latched_if(is_latch && ctx.resource::<LatchedState>().ctrl);
             let (bg_role, fg_role) = key_roles(look, kind, state);
@@ -285,7 +274,7 @@ impl Widget for Keyboard {
                 );
 
                 for key in &row.keys {
-                    let is_latch = matches!(&key.action, KeyAction::LatchModifier(_));
+                    let is_latch = matches!(&key.action, KeyAction::LatchModifier);
                     // The label keeps its normal font while latched.
                     let label_style = key.look.style(KeyState::Normal);
                     let key_handle = s.spawn(
@@ -294,7 +283,6 @@ impl Widget for Keyboard {
                             font: b.fonts.id(label_style.font.unwrap_or(style.font)),
                             font_size: label_style.font_size.unwrap_or(style.font_size),
                             key: key.clone(),
-                            view_index: vi,
                             radius: b.keymap.keyboard.radius,
                         },
                     );
@@ -349,7 +337,7 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
             let target = if &current == lock { unlock } else { lock };
             switch_view(ctx, target);
         }
-        KeyAction::LatchModifier(_) => {
+        KeyAction::LatchModifier => {
             toggle_latch(ctx);
         }
         KeyAction::EmitKeysym(ks) => {
@@ -405,10 +393,9 @@ fn im_commit_text(ctx: &mut Context<'_, Keyboard>, text: &str) -> bool {
     {
         return false;
     }
-    // Stage the commit string + copy out the IM object (Copy) and serial.
+    // Copy out the IM object (Copy) and serial.
     let (im_obj, serial) = {
-        let st = &mut ctx.resource_mut::<input_method::InputMethodState>();
-        st.stage_commit_string(text);
+        let st = ctx.resource::<input_method::InputMethodState>();
         (st.input_method, st.serial)
     };
     let Some(im) = im_obj else {
@@ -651,10 +638,10 @@ impl Widget for Shell {
         // Apply the initial visibility (starts hidden). The change handler
         // above only fires on subsequent flips, so seed the keyboard's
         // `Display` here to match the resource's initial value.
-        if !s.resource::<input_method::KeyboardVisibility>().visible {
-            if let Some(mut kstyle) = s.component_mut::<LayoutStyle>(keyboard) {
-                kstyle.display = Display::Hidden;
-            }
+        if !s.resource::<input_method::KeyboardVisibility>().visible
+            && let Some(mut kstyle) = s.component_mut::<LayoutStyle>(keyboard)
+        {
+            kstyle.display = Display::Hidden;
         }
 
         Shell
