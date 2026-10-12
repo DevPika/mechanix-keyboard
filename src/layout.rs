@@ -127,13 +127,17 @@ impl Default for KeyboardStyle {
     }
 }
 
-// TODO: Have a generic function to check for the positive values
-/// Keep a window dimension only if it's a positive size, warning otherwise.
-fn positive(field: &str, value: Option<f32>) -> Option<f32> {
-    value.filter(|&px| {
-        let ok = px > 0.0;
+/// Keep a size only if it's greater than zero, warning otherwise. Works for
+/// any numeric field (`f32` dimensions, `u16` font size); `NaN` is rejected
+/// since it doesn't compare greater than zero.
+fn positive<T>(field: &str, value: Option<T>) -> Option<T>
+where
+    T: Copy + Default + PartialOrd + std::fmt::Display,
+{
+    value.filter(|&v| {
+        let ok = v > T::default();
         if !ok {
-            warn!("keyboard {field} {px} must be greater than 0; using the default");
+            warn!("keyboard {field} {v} must be greater than 0; using the default");
         }
         ok
     })
@@ -196,14 +200,6 @@ impl KeyboardStyle {
                 default.font
             }),
         };
-        let font_size = match spec.font_size {
-            None => default.font_size,
-            Some(0) => {
-                warn!("keyboard font-size must be greater than 0; using the default");
-                default.font_size
-            }
-            Some(px) => px,
-        };
         Self {
             mode,
             background_color,
@@ -214,7 +210,7 @@ impl KeyboardStyle {
             width: positive("width", spec.width),
             height: positive("height", spec.height).unwrap_or(default.height),
             font,
-            font_size,
+            font_size: positive("font-size", spec.font_size).unwrap_or(default.font_size),
         }
     }
 }
@@ -523,6 +519,17 @@ pub fn load_keymap() -> Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positive_keeps_only_sizes_above_zero() {
+        assert_eq!(positive("height", Some(280.0)), Some(280.0));
+        assert_eq!(positive("height", Some(0.0)), None);
+        assert_eq!(positive("height", Some(-1.0)), None);
+        assert_eq!(positive("height", Some(f32::NAN)), None);
+        assert_eq!(positive::<f32>("height", None), None);
+        assert_eq!(positive("font-size", Some(16u16)), Some(16));
+        assert_eq!(positive("font-size", Some(0u16)), None);
+    }
 
     /// A `Button` with only the fields a test cares about set.
     fn button(f: impl FnOnce(&mut Button)) -> Button {
