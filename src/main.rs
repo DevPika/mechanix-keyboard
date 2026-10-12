@@ -90,17 +90,19 @@ impl LatchedState {
 enum KeyKind {
     /// Regular character key (letters, digits, punctuation).
     Normal,
-    /// Modifier / view-switch key (Shift, Ctrl, abc, Fn, …).
-    Modifier,
+    /// Non-typing key: modifiers (Ctrl, Alt), view switches (Shift, abc, 123),
+    /// and actions not wired yet (prefs, emoji).
+    Function,
 }
 
 /// Classify a key's action into a visual kind for theme colour selection.
 fn kind_of(action: &KeyAction) -> KeyKind {
     match action {
         KeyAction::EmitKeysym(_) | KeyAction::EmitText(_) => KeyKind::Normal,
-        KeyAction::LatchModifier(_) => KeyKind::Modifier,
-        KeyAction::SetView(_) | KeyAction::ToggleView { .. } => KeyKind::Modifier,
-        KeyAction::Unhandled(_) => KeyKind::Modifier,
+        KeyAction::LatchModifier(_)
+        | KeyAction::SetView(_)
+        | KeyAction::ToggleView { .. }
+        | KeyAction::Unhandled(_) => KeyKind::Function,
     }
 }
 
@@ -111,7 +113,7 @@ fn roles_for(kind: KeyKind, state: KeyState) -> (ColorRole, ColorRole) {
         KeyState::Latched => (ColorRole::Primary, ColorRole::OnPrimary),
         KeyState::Normal => match kind {
             KeyKind::Normal => (ColorRole::SurfaceContainerHigh, ColorRole::OnSurface),
-            KeyKind::Modifier => (
+            KeyKind::Function => (
                 ColorRole::SecondaryContainer,
                 ColorRole::OnSecondaryContainer,
             ),
@@ -575,7 +577,7 @@ fn repaint_latch_keys(ctx: &mut Context<'_, Keyboard>) {
         let state = KeyState::latched_if(ctx.resource::<LatchedState>().get(m));
         let mut key = ctx.at(k).unwrap();
         let (label, look) = (key.me().label, key.me().look);
-        let (bg_role, fg_role) = key_roles(look, KeyKind::Modifier, state);
+        let (bg_role, fg_role) = key_roles(look, KeyKind::Function, state);
         let bg = key.color(bg_role);
         let fg = key.color(fg_role);
 
