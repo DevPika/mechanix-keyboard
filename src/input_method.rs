@@ -367,6 +367,8 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 if should_switch_view {
                     switch_to = Some(match st.pending.content_type.purpose {
                         ZwpTextInputV3ContentPurpose::Terminal => "terminal",
+                        ZwpTextInputV3ContentPurpose::Number
+                        | ZwpTextInputV3ContentPurpose::Digits => "number",
                         _ => "base",
                     })
                 }
