@@ -14,6 +14,8 @@
 
 #![recursion_limit = "1024"]
 
+use std::collections::HashSet;
+
 use mecha_wayland::prelude::*;
 
 mod color_role;
@@ -46,23 +48,22 @@ const BAR_HEIGHT: f32 = 8.0;
 /// function can read/write it.
 #[derive(Default)]
 struct LatchedState {
-    ctrl: bool,
-    alt: bool,
+    armed: HashSet<Modifier>,
 }
 impl Resource for LatchedState {}
 
 impl LatchedState {
-    fn get_mut(&mut self, m: Modifier) -> &mut bool {
-        match m {
-            Modifier::Control => &mut self.ctrl,
-            Modifier::Alt => &mut self.alt,
-        }
+    fn get(&self, m: Modifier) -> bool {
+        self.armed.contains(&m)
     }
 
-    fn get(&self, m: Modifier) -> bool {
-        match m {
-            Modifier::Control => self.ctrl,
-            Modifier::Alt => self.alt,
+    /// Flip `m`'s latch; returns whether it is now armed.
+    fn toggle(&mut self, m: Modifier) -> bool {
+        if self.armed.remove(&m) {
+            false
+        } else {
+            self.armed.insert(m);
+            true
         }
     }
 }
@@ -113,12 +114,6 @@ fn key_roles(look: KeyLook, kind: KeyKind, state: KeyState) -> (ColorRole, Color
     )
 }
 
-/// The flex-grow weight for a key, derived from its outline width relative to
-/// the default 50px key.
-fn grow_weight(key: &layout::Key) -> f32 {
-    key.width / 50.0
-}
-
 /// A themed key button: a `div` with a `Paint::Quad` background resolved from
 /// `ColorRole`, a centred text label, and an `on_theme` callback that
 /// re-resolves both colours when the theme mode flips at runtime.
@@ -165,7 +160,10 @@ impl Widget for Key {
 
         *s.component_mut::<LayoutStyle>(me).unwrap() = LayoutStyle::default()
             .center()
-            .grow(grow_weight(&b.key))
+            // Outline width is the flex-grow weight; only ratios within a row
+            // matter. Kept unscaled so a row's weights never sum below 1, which
+            // would leave part of the row's free space unfilled.
+            .grow(b.key.width)
             .padding_all(px(2.0));
 
         *s.component_mut::<Paint>(me).unwrap() =
@@ -481,9 +479,8 @@ fn vk_emit_keysym(ctx: &mut Context<'_, Keyboard>, ks: xkbcommon::xkb::Keysym, l
 
 /// Clear every modifier latch after a keystroke fires (one-shot).
 fn consume_latch(ctx: &mut Context<'_, Keyboard>) {
-    let latched = ctx.resource::<LatchedState>();
-    if latched.ctrl || latched.alt {
-        *ctx.resource_mut::<LatchedState>() = LatchedState::default();
+    if !ctx.resource::<LatchedState>().armed.is_empty() {
+        ctx.resource_mut::<LatchedState>().armed.clear();
         repaint_latch_keys(ctx);
     }
 }
@@ -512,12 +509,7 @@ fn switch_view(ctx: &mut Context<'_, Keyboard>, target: &str) {
 /// Toggle a modifier's one-shot latch and repaint every latching key across
 /// all views to reflect the armed/disarmed state.
 fn toggle_latch(ctx: &mut Context<'_, Keyboard>, m: Modifier) {
-    let armed = {
-        let mut latched = ctx.resource_mut::<LatchedState>();
-        let flag = latched.get_mut(m);
-        *flag = !*flag;
-        *flag
-    };
+    let armed = ctx.resource_mut::<LatchedState>().toggle(m);
     repaint_latch_keys(ctx);
     tracing::info!(modifier = ?m, armed, "latch toggled");
 }
@@ -537,8 +529,6 @@ fn repaint_latch_keys(ctx: &mut Context<'_, Keyboard>) {
 
         key.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
         set_label_color(ctx, label, fg);
-        // The label colour is handled by the on_theme handler on the next
-        // theme change; the paint update here is the important visual cue.
     }
 }
 
