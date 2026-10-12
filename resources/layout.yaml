@@ -64,6 +64,13 @@ views:
         - "a s d f g h j k l Return"
         - "Shift_L  z x c v b n m , ."
         - ": - _ space ← ↑ ↓ →"
+    terminal_upper:
+        - "Esc Ctrl Alt Tab | ~ ` / \\ BackSpace"
+        - "1 2 3 4 5 6 7 9 0"
+        - "Q W E R T Y U I O P"
+        - "A S D F G H J K L Return"
+        - "Shift_L  Z X C V B N M , ."
+        - ": - _ space ← ↑ ↓ →"
 
 buttons:
     Shift_L:
