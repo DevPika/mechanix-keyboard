@@ -28,7 +28,7 @@ mod virtual_keyboard;
 
 use crate::icons::Icons;
 use font::Fonts;
-use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt};
+use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt, SwitchView};
 use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, KeyFace, Keymap};
 /// The keymap view shown when the keyboard first appears.
@@ -319,6 +319,9 @@ impl Widget for Keyboard {
             }
         }
 
+        s.on::<SwitchView>(me, |ctx, event| {
+            switch_view(ctx, event.view);
+        });
         Keyboard {
             current_view: initial_view,
             view_nodes,
