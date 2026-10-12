@@ -55,6 +55,11 @@ views:
         - "_ \\ | ~ ( ) $ & @ ”"
         - "show_numbers  . , ? ! ’  BackSpace"
         - "show_letters show_emoji comma  space  period done"
+    terminal_symbols:
+        - "[ ] { } # % ^ * + ="
+        - "_ \\ | ~ ( ) $ & @ ”"
+        - ". , ? ! ’  BackSpace"
+        - "Terminal_show_letters show_emoji comma  space  period Return"
     eschars:
         - "F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12"
         - "ä è é ö ü Ä È É Ö Ü"
@@ -67,15 +72,15 @@ views:
         - "1 2 3 4 5 6 7 9 0"
         - "q w e r t y u i o p"
         - "a s d f g h j k l Return"
-        - "Shift_Terminal_L  z x c v b n m , ."
-        - ": - _ space ← ↑ ↓ →"
+        - "Terminal_Shift_L  z x c v b n m , ."
+        - ": - _ space ← ↑ ↓ → Terminal_show_symbols"
     terminal_upper:
         - "Esc Ctrl Alt Tab | ~ ` / \\ BackSpace"
         - "1 2 3 4 5 6 7 9 0"
         - "Q W E R T Y U I O P"
         - "A S D F G H J K L Return"
-        - "Shift_Terminal_L  Z X C V B N M , ."
-        - ": - _ space ← ↑ ↓ →"
+        - "Terminal_Shift_L  Z X C V B N M , ."
+        - ": - _ space ← ↑ ↓ → Terminal_show_symbols"
 
 buttons:
     Shift_L:
@@ -86,7 +91,7 @@ buttons:
                 unlock_view: "base"
         outline: "altline"
         icon: "key-shift-symbolic"
-    Shift_Terminal_L:
+    Terminal_Shift_L:
         key_style: "function"
         action:
             locking:
@@ -122,6 +127,12 @@ buttons:
             set_view: "base"
         outline: "switch"
         label: "abc"
+    Terminal_show_letters:
+        key_style: "function"
+        action:
+            set_view: "terminal"
+        outline: "switch"
+        label: "abc"
     show_numbers:
         key_style: "function"
         action:
@@ -132,6 +143,12 @@ buttons:
         key_style: "function"
         action:
             set_view: "symbols"
+        outline: "switch"
+        label: "#+="
+    Terminal_show_symbols:
+        key_style: "function"
+        action:
+            set_view: "terminal_symbols"
         outline: "switch"
         label: "#+="
     # Placeholder: there's no emoji view yet, so this logs and types nothing.
@@ -228,18 +245,18 @@ buttons:
         outline: "action"
         keysym: "Tab"
     "↑":
-        outline: "action"
+        outline: "default"
         keysym: "Up"
         icon: "go-up-symbolic"
     "↓":
-        outline: "action"
+        outline: "default"
         keysym: "Down"
         icon: "go-down-symbolic"
     "←":
-        outline: "action"
+        outline: "default"
         keysym: "Left"
         icon: "go-previous-symbolic"
     "→":
-        outline: "action"
+        outline: "default"
         keysym: "Right"
         icon: "go-next-symbolic"
