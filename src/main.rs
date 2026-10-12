@@ -190,6 +190,23 @@ impl Widget for Key {
             set_label_color(ctx, label, fg);
         });
 
+        if !is_latch {
+            s.on::<Press>(me, move |ctx, _| {
+                let bg = ctx.color(bg_role);
+                let fg = ctx.color(fg_role);
+
+                set_label_color(ctx, label, bg);
+                ctx.set_paint(Paint::Quad(Quad::new(fg).radius(radius)));
+            });
+            s.on::<Release>(me, move |ctx, _| {
+                let bg = ctx.color(bg_role);
+                let fg = ctx.color(fg_role);
+
+                set_label_color(ctx, label, fg);
+                ctx.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
+            });
+        }
+
         Key { label, look }
     }
 }
@@ -289,6 +306,11 @@ impl Widget for Keyboard {
                     // Clone the action into the Clicked closure. Each key
                     // gets its own handler that dispatches through the
                     // Keyboard's action logic.
+
+                    /*
+                    NOTE: this is why action has to be handled here instead of
+                    in Key::build
+                    */
                     let action = key.action.clone();
                     s.on::<Clicked>(key_handle, move |ctx, _| {
                         dispatch(ctx, &action);
