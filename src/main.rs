@@ -24,7 +24,7 @@ mod shape;
 mod spacing;
 mod virtual_keyboard;
 
-use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt};
+use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt, SwitchView};
 use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, Keymap};
 
@@ -268,6 +268,9 @@ impl Widget for Keyboard {
             }
         }
 
+        s.on::<SwitchView>(me, |ctx, event| {
+            switch_view(ctx, event.view);
+        });
         Keyboard {
             current_view: initial_view,
             view_nodes,
