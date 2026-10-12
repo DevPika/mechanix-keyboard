@@ -8,7 +8,7 @@
 //!
 //! The keymap (parsed from `resources/layout.yaml` by `layout.rs`) drives which
 //! keys appear and what they do. View switching (Shift_L `locking`,
-//! `show_symbols`, `show_eschars`) and one-shot modifier latching (Ctrl) are
+//! `show_symbols`, `show_eschars`) and one-shot modifier latching (Ctrl, Alt) are
 //! supported. Text keys commit through `zwp_input_method_v2` when a text input
 //! is focused, falling back to `zwp_virtual_keyboard_v1` keysym transport.
 
@@ -30,7 +30,7 @@ use crate::icons::Icons;
 use font::Fonts;
 use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt, SwitchView};
 use key_style::{KeyLook, KeyState};
-use layout::{KeyAction, KeyFace, Keymap};
+use layout::{KeyAction, KeyFace, Keymap, Modifier};
 /// The keymap view shown when the keyboard first appears.
 pub const INITIAL_VIEW: &str = "base";
 
@@ -41,14 +41,31 @@ pub const INITIAL_VIEW: &str = "base";
 /// text input activates or the bar is tapped.
 const BAR_HEIGHT: f32 = 8.0;
 
-/// Shared state for the Ctrl one-shot latch. Stored as a `Resource` so both
-/// the Key widget's `on_theme` handler and the Keyboard's `dispatch` function
-/// can read/write it.
+/// Shared state for the one-shot modifier latches. Stored as a `Resource` so
+/// both the Key widget's `on_theme` handler and the Keyboard's `dispatch`
+/// function can read/write it.
 #[derive(Default)]
 struct LatchedState {
     ctrl: bool,
+    alt: bool,
 }
 impl Resource for LatchedState {}
+
+impl LatchedState {
+    fn get_mut(&mut self, m: Modifier) -> &mut bool {
+        match m {
+            Modifier::Control => &mut self.ctrl,
+            Modifier::Alt => &mut self.alt,
+        }
+    }
+
+    fn get(&self, m: Modifier) -> bool {
+        match m {
+            Modifier::Control => self.ctrl,
+            Modifier::Alt => self.alt,
+        }
+    }
+}
 
 // ── Key widget (themed button) ────────────────────────────────────────────
 
@@ -66,7 +83,7 @@ enum KeyKind {
 fn kind_of(action: &KeyAction) -> KeyKind {
     match action {
         KeyAction::EmitKeysym(_) | KeyAction::EmitText(_) => KeyKind::Normal,
-        KeyAction::LatchModifier => KeyKind::Modifier,
+        KeyAction::LatchModifier(_) => KeyKind::Modifier,
         KeyAction::SetView(_) | KeyAction::ToggleView { .. } => KeyKind::Modifier,
         KeyAction::Unhandled(_) => KeyKind::Modifier,
     }
@@ -169,9 +186,14 @@ impl Widget for Key {
             }
         };
 
-        let is_latch = matches!(b.key.action, KeyAction::LatchModifier);
+        let latch = match b.key.action {
+            KeyAction::LatchModifier(m) => Some(m),
+            _ => None,
+        };
+        let is_latch = latch.is_some();
         s.on_theme(me, move |ctx| {
-            let state = KeyState::latched_if(is_latch && ctx.resource::<LatchedState>().ctrl);
+            let state =
+                KeyState::latched_if(latch.is_some_and(|m| ctx.resource::<LatchedState>().get(m)));
             let (bg_role, fg_role) = key_roles(look, kind, state);
             let bg = ctx.color(bg_role);
             let fg = ctx.color(fg_role);
@@ -202,7 +224,7 @@ impl Widget for Key {
 
 // ── Keyboard widget ───────────────────────────────────────────────────────
 
-/// The on-screen keyboard: manages the current view, the Ctrl one-shot latch,
+/// The on-screen keyboard: manages the current view, the one-shot modifier latches,
 /// and spawns themed `Key` widgets from the parsed keymap. All views are
 /// spawned at build time; non-current views are `Display::Hidden` and toggled
 /// visible on view-switch key taps.
@@ -211,8 +233,9 @@ struct Keyboard {
     current_view: usize,
     /// One `Handle<Div>` per view; toggled `Display::Hidden`/`Flex` on switch.
     view_nodes: Vec<Handle<Div>>,
-    /// Every Ctrl key across all views, for armed-state repaint on latch toggle.
-    ctrl_keys: Vec<Handle<Key>>,
+    /// Every latching modifier key across all views, for armed-state repaint on
+    /// latch toggle.
+    latch_keys: Vec<(Modifier, Handle<Key>)>,
     /// The keymap (kept for view name lookup on switch).
     keymap: Keymap,
 }
@@ -249,7 +272,7 @@ impl Widget for Keyboard {
 
         // ── spawn all views ─────────────────────────────────────────────
         let mut view_nodes = Vec::new();
-        let mut ctrl_keys = Vec::new();
+        let mut latch_keys = Vec::new();
 
         for (vi, view) in b.keymap.views.iter().enumerate() {
             let view_style = if vi == initial_view {
@@ -274,7 +297,6 @@ impl Widget for Keyboard {
                 );
 
                 for key in &row.keys {
-                    let is_latch = matches!(&key.action, KeyAction::LatchModifier);
                     // The label keeps its normal font while latched.
                     let label_style = key.look.style(KeyState::Normal);
                     let key_handle = s.spawn(
@@ -287,8 +309,8 @@ impl Widget for Keyboard {
                         },
                     );
 
-                    if is_latch {
-                        ctrl_keys.push(key_handle);
+                    if let KeyAction::LatchModifier(m) = key.action {
+                        latch_keys.push((m, key_handle));
                     }
 
                     // Clone the action into the Clicked closure. Each key
@@ -313,7 +335,7 @@ impl Widget for Keyboard {
         Keyboard {
             current_view: initial_view,
             view_nodes,
-            ctrl_keys,
+            latch_keys,
             keymap: b.keymap,
         }
     }
@@ -337,8 +359,8 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
             let target = if &current == lock { unlock } else { lock };
             switch_view(ctx, target);
         }
-        KeyAction::LatchModifier => {
-            toggle_latch(ctx);
+        KeyAction::LatchModifier(m) => {
+            toggle_latch(ctx, *m);
         }
         KeyAction::EmitKeysym(ks) => {
             let latched_mask = latched_mask(ctx);
@@ -373,17 +395,18 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
     }
 }
 
-/// The combined modifier mask of any currently-latched Ctrl, to OR into a
-/// keystroke. Reads from the `LatchedState` resource.
+/// The combined modifier mask of every currently-latched modifier, to OR into
+/// a keystroke. Reads from the `LatchedState` resource.
 fn latched_mask(ctx: &Context<'_, Keyboard>) -> u32 {
-    if !ctx.resource::<LatchedState>().ctrl {
-        return 0;
-    }
-    ctx.resource::<virtual_keyboard::VirtualKeyboardState>()
-        .mod_masks
-        .get("Control")
-        .copied()
-        .unwrap_or(0)
+    let latched = ctx.resource::<LatchedState>();
+    let masks = &ctx
+        .resource::<virtual_keyboard::VirtualKeyboardState>()
+        .mod_masks;
+    Modifier::ALL
+        .into_iter()
+        .filter(|&m| latched.get(m))
+        .filter_map(|m| masks.get(&m).copied())
+        .fold(0, |acc, mask| acc | mask)
 }
 
 /// Try to commit text through `zwp_input_method_v2`. Returns `true` if the edit
@@ -456,11 +479,12 @@ fn vk_emit_keysym(ctx: &mut Context<'_, Keyboard>, ks: xkbcommon::xkb::Keysym, l
     tracing::info!(keysym = %name, code = stroke.code, mods, "typed");
 }
 
-/// Clear the Ctrl latch after a keystroke fires (one-shot).
+/// Clear every modifier latch after a keystroke fires (one-shot).
 fn consume_latch(ctx: &mut Context<'_, Keyboard>) {
-    if ctx.resource::<LatchedState>().ctrl {
-        ctx.resource_mut::<LatchedState>().ctrl = false;
-        repaint_ctrl_keys(ctx);
+    let latched = ctx.resource::<LatchedState>();
+    if latched.ctrl || latched.alt {
+        *ctx.resource_mut::<LatchedState>() = LatchedState::default();
+        repaint_latch_keys(ctx);
     }
 }
 
@@ -485,21 +509,26 @@ fn switch_view(ctx: &mut Context<'_, Keyboard>, target: &str) {
     tracing::info!(view = %target, "switched view");
 }
 
-/// Toggle the Ctrl one-shot latch and repaint every Ctrl key across all views
-/// to reflect the armed/disarmed state.
-fn toggle_latch(ctx: &mut Context<'_, Keyboard>) {
-    ctx.resource_mut::<LatchedState>().ctrl = !ctx.resource::<LatchedState>().ctrl;
-    repaint_ctrl_keys(ctx);
-    tracing::info!("Ctrl latch: {}", ctx.resource::<LatchedState>().ctrl);
+/// Toggle a modifier's one-shot latch and repaint every latching key across
+/// all views to reflect the armed/disarmed state.
+fn toggle_latch(ctx: &mut Context<'_, Keyboard>, m: Modifier) {
+    let armed = {
+        let mut latched = ctx.resource_mut::<LatchedState>();
+        let flag = latched.get_mut(m);
+        *flag = !*flag;
+        *flag
+    };
+    repaint_latch_keys(ctx);
+    tracing::info!(modifier = ?m, armed, "latch toggled");
 }
 
-/// Repaint all Ctrl keys to reflect the current latched state.
-fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
-    let state = KeyState::latched_if(ctx.resource::<LatchedState>().ctrl);
+/// Repaint all latching modifier keys to reflect the current latched state.
+fn repaint_latch_keys(ctx: &mut Context<'_, Keyboard>) {
     let radius = ctx.me().keymap.keyboard.radius;
 
-    let keys = ctx.me().ctrl_keys.clone();
-    for k in keys {
+    let keys = ctx.me().latch_keys.clone();
+    for (m, k) in keys {
+        let state = KeyState::latched_if(ctx.resource::<LatchedState>().get(m));
         let mut key = ctx.at(k).unwrap();
         let (label, look) = (key.me().label, key.me().look);
         let (bg_role, fg_role) = key_roles(look, KeyKind::Modifier, state);

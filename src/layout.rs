@@ -241,6 +241,25 @@ pub enum KeyFace {
     Icon(String),
 }
 
+/// A latchable modifier, named as squeekboard's `modifier:` field names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Modifier {
+    Control,
+    Alt,
+}
+
+impl Modifier {
+    pub const ALL: [Modifier; 2] = [Modifier::Control, Modifier::Alt];
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "Control" => Some(Self::Control),
+            "Alt" => Some(Self::Alt),
+            _ => None,
+        }
+    }
+}
+
 /// What a Key *does* when activated — the behavioural counterpart to `KeyFace`.
 /// Resolved at IR-build time from a squeekboard button's `keysym`/`text`/`action`
 /// fields.
@@ -256,13 +275,13 @@ pub enum KeyAction {
     /// Flip between two named views by current view (squeekboard `locking`): go
     /// to `lock` normally, or back to `unlock` when `lock` is already current.
     ToggleView { lock: String, unlock: String },
-    /// Arm Control for exactly the *next* keystroke, then it auto-clears — the
-    /// OSK one-shot latch. The modifier's mask is OR'd into the next emitted
-    /// Keystroke; tapping again disarms. Only Control is wired for now.
-    LatchModifier,
+    /// Arm a modifier for exactly the *next* keystroke, then it auto-clears —
+    /// the OSK one-shot latch. The modifier's mask is OR'd into the next emitted
+    /// Keystroke; tapping again disarms. Several modifiers can be armed at once.
+    LatchModifier(Modifier),
     /// A squeekboard action not wired this pass (prefs, and modifiers other than
-    /// Control). The key still draws and hit-tests; tapping it logs but types
-    /// nothing. Carries a name for that log.
+    /// Control/Alt). The key still draws and hit-tests; tapping it logs but
+    /// types nothing. Carries a name for that log.
     Unhandled(String),
 }
 
@@ -385,7 +404,7 @@ fn types_digit(action: &KeyAction) -> bool {
         }
         KeyAction::SetView(_)
         | KeyAction::ToggleView { .. }
-        | KeyAction::LatchModifier
+        | KeyAction::LatchModifier(_)
         | KeyAction::Unhandled(_) => None,
     };
     text.is_some_and(|c| c.is_ascii_digit())
@@ -425,14 +444,14 @@ fn resolve_action(token: &str, button: Option<&Button>) -> KeyAction {
             Some(ActionSpec::Other(_)) => return KeyAction::Unhandled(token.to_string()),
             None => {}
         }
-        // A modifier button latches for the next keystroke. Only Control is wired
-        // this pass (see `toggle_latch` in main.rs and `virtual_keyboard`'s `mod_masks`);
-        // every other modifier still defers to `Unhandled`.
+        // A modifier button latches for the next keystroke. Only Control and Alt
+        // are wired (see `toggle_latch` in main.rs and `virtual_keyboard`'s
+        // `mod_masks`); every other modifier still defers to `Unhandled`.
         if let Some(m) = b.modifier.as_deref() {
-            if m == "Control" {
-                return KeyAction::LatchModifier;
-            }
-            return KeyAction::Unhandled(token.to_string());
+            return match Modifier::from_name(m) {
+                Some(m) => KeyAction::LatchModifier(m),
+                None => KeyAction::Unhandled(token.to_string()),
+            };
         }
         if let Some(text) = &b.text {
             return KeyAction::EmitText(text.clone());
@@ -598,10 +617,10 @@ mod tests {
             KeyAction::Unhandled(_)
         ));
 
-        // Alt is a modifier, but not wired to latch this pass — still deferred.
-        let alt = button(|b| b.modifier = Some("Alt".into()));
+        // Super is a modifier, but not wired to latch this pass — still deferred.
+        let sup = button(|b| b.modifier = Some("Super".into()));
         assert!(matches!(
-            resolve_action("Alt", Some(&alt)),
+            resolve_action("Super", Some(&sup)),
             KeyAction::Unhandled(_)
         ));
     }
@@ -611,7 +630,16 @@ mod tests {
         let ctrl = button(|b| b.modifier = Some("Control".into()));
         assert!(matches!(
             resolve_action("Ctrl", Some(&ctrl)),
-            KeyAction::LatchModifier
+            KeyAction::LatchModifier(Modifier::Control)
+        ));
+    }
+
+    #[test]
+    fn alt_modifier_latches() {
+        let alt = button(|b| b.modifier = Some("Alt".into()));
+        assert!(matches!(
+            resolve_action("Alt", Some(&alt)),
+            KeyAction::LatchModifier(Modifier::Alt)
         ));
     }
 

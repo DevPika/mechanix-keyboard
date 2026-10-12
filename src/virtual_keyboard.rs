@@ -14,7 +14,11 @@ use std::time::Instant;
 
 use rustix::fs::{MemfdFlags, SealFlags};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
-use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
+use xkbcommon::xkb::{
+    self, Context, Keycode, Keymap, Keysym, MOD_NAME_ALT, MOD_NAME_CTRL, MOD_NAME_SHIFT,
+};
+
+use crate::layout::Modifier;
 
 use mecha_wayland::prelude::*;
 
@@ -37,9 +41,9 @@ pub struct VirtualKeyboardState {
     /// keysym → keystroke, scanned from the uploaded keymap's base and shifted
     /// levels. Empty until the keymap is sent; emission is a no-op until then.
     pub keycodes: HashMap<Keysym, Keystroke>,
-    /// squeekboard modifier name → its serialized mask, derived from the keymap
-    /// (e.g. `Control` → the Control mask). Only latchable modifiers are indexed.
-    pub mod_masks: HashMap<String, u32>,
+    /// Latchable modifier → its serialized mask, derived from the keymap
+    /// (e.g. `Control` → the Control mask, `Alt` → Mod1).
+    pub mod_masks: HashMap<Modifier, u32>,
 }
 
 impl Default for VirtualKeyboardState {
@@ -117,14 +121,19 @@ fn init(app: &mut App) {
         keymap_fd.size,
     );
 
-    // Index the modifiers a latched key can arm, mapping the squeekboard name
-    // used in the layout to the serialized mask sent over the wire. Control only
-    // this pass — mirrors the modifier gate in `layout::resolve_action`.
-    let mut mod_masks = HashMap::new();
-    mod_masks.insert(
-        "Control".to_string(),
-        1u32 << keymap.mod_get_index(MOD_NAME_CTRL),
-    );
+    // Index the modifiers a latched key can arm, mapping each to the serialized
+    // mask sent over the wire. Mirrors the modifier gate in
+    // `layout::resolve_action`.
+    let mod_masks = Modifier::ALL
+        .into_iter()
+        .map(|m| {
+            let name = match m {
+                Modifier::Control => MOD_NAME_CTRL,
+                Modifier::Alt => MOD_NAME_ALT,
+            };
+            (m, 1u32 << keymap.mod_get_index(name))
+        })
+        .collect();
 
     tracing::info!(mapped = keycodes.len(), "virtual keyboard ready");
     let mut vk = app.resource_mut::<VirtualKeyboardState>();
