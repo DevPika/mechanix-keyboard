@@ -344,6 +344,14 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 None
             }
             ZwpInputMethodV2Event::Done { .. } => {
+                // Call a SwitchView event if the text box requests us for a
+                // different keyboard
+                let should_switch_view = (!st.current.active && st.pending.active)
+                    && st.current.content_type.purpose != st.pending.content_type.purpose;
+
+                if should_switch_view {}
+
+                // simple copy
                 st.current = st.pending.clone();
                 st.serial = st.serial.wrapping_add(1);
                 let active = st.current.active;
@@ -351,6 +359,7 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 tracing::info!(
                     active = active,
                     serial = serial,
+                    should_switch_view,
                     "input-method: state applied"
                 );
                 // The applied active state drives the surface: show on
