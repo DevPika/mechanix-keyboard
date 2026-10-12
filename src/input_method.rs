@@ -230,6 +230,11 @@ impl<W: Widget> KeyboardVisibilityExt for Context<'_, W> {
     }
 }
 
+pub struct SwitchView {
+    pub view: &'static str, // view to switch to
+}
+impl Event for SwitchView {}
+
 /// System: on `KeyboardVisibilityChanged`, broadcast `ApplyKeyboardVisibility`
 /// to the root and every descendant so the `Shell` handler re-applies
 /// `Display`. Mirrors `theme::on_theme_changed`.
@@ -294,6 +299,9 @@ fn init(app: &mut App) {
 /// `done` applies it to `current` and bumps the serial, `unavailable` marks the
 /// object inert.
 fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
+    // store what we need to switch to if we get a content_type event
+    let mut switch_to: Option<&'static str> = None;
+
     // Visibility is driven from the applied (post-`done`) active state: it
     // is computed inside the `InputMethodState` borrow and applied after the
     // guard drops, so `set_keyboard_visibility` can take `&mut App`.
@@ -346,10 +354,22 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
             ZwpInputMethodV2Event::Done { .. } => {
                 // Call a SwitchView event if the text box requests us for a
                 // different keyboard
-                let should_switch_view = (!st.current.active && st.pending.active)
-                    && st.current.content_type.purpose != st.pending.content_type.purpose;
 
-                if should_switch_view {}
+                // TODO: LLM did this boolean logic, probably can be simplified
+                // check if the text box became active
+                let became_active = !st.current.active && st.pending.active;
+                // check if we have changed purpose
+                let purpose_changed =
+                    st.current.content_type.purpose != st.pending.content_type.purpose;
+                // only if we are actually active and we switched view, do the change
+                let should_switch_view = st.pending.active && (became_active || purpose_changed);
+
+                if should_switch_view {
+                    switch_to = Some(match st.pending.content_type.purpose {
+                        ZwpTextInputV3ContentPurpose::Terminal => "terminal",
+                        _ => "base",
+                    })
+                }
 
                 // simple copy
                 st.current = st.pending.clone();
@@ -373,6 +393,13 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
             }
         }
     };
+    if let Some(view) = switch_to {
+        let targets: Vec<NodeId> = app
+            .widgets::<crate::Keyboard>()
+            .map(|(id, _keyboard)| id)
+            .collect();
+        app.emit(SwitchView { view: view }, targets);
+    }
     if let Some(visible) = apply_visible {
         app.set_keyboard_visibility(visible);
     }
