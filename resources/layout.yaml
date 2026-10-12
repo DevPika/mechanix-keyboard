@@ -18,6 +18,7 @@ key_styles:
     bottom:   { background: surface-container-high,    foreground: on-surface,           font-size: 16 }
     done:     { background: on-secondary-container,    foreground: on-primary-container, font-size: 18 }
     latched:  { background: primary,                   foreground: on-primary }
+    emoji:    { background: surface-container-highest, foreground: primary }
     return:	  { background: primary,                   foreground: on-primary }
 
 outlines:
@@ -120,10 +121,10 @@ buttons:
         label: "#+="
     # Placeholder: there's no emoji view yet, so this logs and types nothing.
     show_emoji:
-        key_style: "function"
+        key_style: "emoji"
         action: "show_emoji"
         outline: "narrow"
-        label: "😊"
+        icon: "face-smile-symbolic"
     comma:
         outline: "narrow"
         label: ","

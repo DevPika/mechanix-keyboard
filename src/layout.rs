@@ -255,13 +255,13 @@ pub struct Row {
     pub keys: Vec<Key>,
 }
 
-/// What a key draws in its cell: a text label *or* a symbolic icon glyph, never
-/// both. Resolved at IR-build time; the icon is a Unicode glyph string, so no
-/// baked atlas sprite is needed.
+/// What a key draws in its cell: a text label *or* a symbolic icon, never both.
+/// The icon is its name (an SVG's file stem under `resources/icons`); the `Key`
+/// widget looks up the rasterized sprite in the `Icons` resource.
 #[derive(Debug, Clone)]
 pub enum KeyFace {
     Text(String),
-    Icon(&'static str),
+    Icon(String),
 }
 
 /// What a Key *does* when activated — the behavioural counterpart to `KeyFace`.
@@ -303,17 +303,16 @@ pub struct Key {
 }
 
 impl Key {
-    /// A human-readable label for bring-up tracing (hover/tap). Icon keys have no
-    /// text — and we dropped their name when resolving to a region — so they log
-    /// as `[icon]`.
+    /// A human-readable label for bring-up tracing (hover/tap). Icon keys log
+    /// their icon name.
     pub fn display_label(&self) -> &str {
         match &self.face {
             KeyFace::Text(s) => s,
-            KeyFace::Icon(g) => g,
+            KeyFace::Icon(name) => name,
         }
     }
 
-    /// The text to render on the key: either the label or the icon glyph.
+    /// The text to render on the key: either the label or the icon name.
     pub fn label_text(&self) -> &str {
         self.display_label()
     }
@@ -451,39 +450,15 @@ impl View {
     }
 }
 
-/// Map a squeekboard icon name to a Unicode glyph. The old OSK baked SVG
-/// sprites into an atlas; the new themed UI uses text labels, so icons are
-/// rendered as Unicode symbols that participate in theming like any text key.
-fn icon_symbol(name: &str) -> Option<&'static str> {
-    match name {
-        "key-shift-symbolic" => Some("\u{21e7}"),          // ⇧
-        "edit-clear-symbolic" => Some("\u{232b}"),         // ⌫
-        "key-enter-symbolic" => Some("\u{23ce}"),          // ⏎
-        "preferences-system-symbolic" => Some("\u{2699}"), // ⚙
-        "go-up-symbolic" => Some("\u{2191}"),              // ↑
-        "go-down-symbolic" => Some("\u{2193}"),            // ↓
-        "go-previous-symbolic" => Some("\u{2190}"),        // ←
-        "go-next-symbolic" => Some("\u{2192}"),            // →
-        _ => None,
-    }
-}
-
 /// Resolve a button token's face. Icon wins over label when both are set
-/// (matching squeekboard) — and warns. An unknown icon name warns and falls
-/// back to an empty text face. With neither icon nor label, the button's own
-/// name is the label.
+/// (matching squeekboard) — and warns. With neither icon nor label, the
+/// button's own name is the label.
 fn resolve_face(token: &str, button: Option<&Button>) -> KeyFace {
     if let Some(icon) = button.and_then(|b| b.icon.as_deref()) {
         if button.and_then(|b| b.label.as_deref()).is_some() {
             warn!("button {token:?} sets both `icon` and `label`; using icon {icon:?}");
         }
-        return match icon_symbol(icon) {
-            Some(glyph) => KeyFace::Icon(glyph),
-            None => {
-                warn!("icon {icon:?} has no Unicode mapping; drawing empty key");
-                KeyFace::Text(String::new())
-            }
-        };
+        return KeyFace::Icon(icon.to_string());
     }
     let label = button
         .and_then(|b| b.label.clone())

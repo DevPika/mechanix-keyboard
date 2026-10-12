@@ -18,6 +18,7 @@ use mecha_wayland::prelude::*;
 
 mod color_role;
 mod font;
+mod icons;
 mod input_method;
 mod key_style;
 mod layout;
@@ -25,11 +26,11 @@ mod shape;
 mod spacing;
 mod virtual_keyboard;
 
+use crate::icons::Icons;
 use font::Fonts;
 use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt};
 use key_style::{KeyLook, KeyState};
-use layout::{KeyAction, Keymap};
-
+use layout::{KeyAction, KeyFace, Keymap};
 /// The keymap view shown when the keyboard first appears.
 pub const INITIAL_VIEW: &str = "base";
 
@@ -117,8 +118,22 @@ fn grow_weight(key: &layout::Key) -> f32 {
 /// The key's `Clicked` handler dispatches its `KeyAction` through the virtual
 /// keyboard / input method / view-switch logic.
 struct Key {
-    label: Handle<Text>,
+    label: Label,
     look: KeyLook,
+}
+
+#[derive(Clone, Copy)]
+enum Label {
+    Text(Handle<Text>),
+    Icon(Handle<Icon>),
+}
+
+/// Recolour a key's label, whichever kind it is.
+fn set_label_color<W: Widget>(ctx: &mut Context<'_, W>, label: Label, fg: Color) {
+    match label {
+        Label::Text(h) => ctx.at(h).unwrap().set_color(fg),
+        Label::Icon(h) => ctx.at(h).unwrap().set_color(fg),
+    }
 }
 
 struct KeyBuilder {
@@ -150,12 +165,20 @@ impl Widget for Key {
         *s.component_mut::<Paint>(me).unwrap() =
             Paint::Quad(Quad::new(s.color(bg_role)).radius(radius));
 
-        let label = s.spawn(
-            me,
-            text(b.font, b.key.display_label())
-                .color(s.color(fg_role))
-                .size(b.font_size),
-        );
+        let fg = s.color(fg_role);
+        let label = match &b.key.face {
+            KeyFace::Icon(name) => match s.resource::<Icons>().get(name) {
+                Some(sprite) => Label::Icon(s.spawn(me, icon(sprite).color(fg))),
+                None => {
+                    tracing::warn!("no icon named {name:?} in resources/icons; drawing empty key");
+                    // set empty labe if icons not found
+                    Label::Text(s.spawn(me, text(b.font, "").color(fg).size(b.font_size)))
+                }
+            },
+            KeyFace::Text(t) => {
+                Label::Text(s.spawn(me, text(b.font, t).color(fg).size(b.font_size)))
+            }
+        };
 
         let is_latch = matches!(b.key.action, KeyAction::LatchModifier(_));
         s.on_theme(me, move |ctx| {
@@ -164,7 +187,7 @@ impl Widget for Key {
             let bg = ctx.color(bg_role);
             let fg = ctx.color(fg_role);
             ctx.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
-            ctx.at(label).unwrap().set_color(fg);
+            set_label_color(ctx, label, fg);
         });
 
         Key { label, look }
@@ -469,7 +492,7 @@ fn repaint_ctrl_keys(ctx: &mut Context<'_, Keyboard>) {
         let fg = key.color(fg_role);
 
         key.set_paint(Paint::Quad(Quad::new(bg).radius(radius)));
-        ctx.at(label).unwrap().set_color(fg);
+        set_label_color(ctx, label, fg);
         // The label colour is handled by the on_theme handler on the next
         // theme change; the paint update here is the important visual cue.
     }
@@ -661,6 +684,11 @@ fn main() {
     app.add_module(input_method::InputMethodModule);
 
     let fonts = Fonts::load(&mut app.resource_mut::<Atlas>());
+    let icons = Icons::load(
+        &mut app.resource_mut::<Atlas>(),
+        keymap.keyboard.font_size as u32,
+    );
+    app.insert_resource(icons);
 
     let root = app.root();
     app.spawn(
