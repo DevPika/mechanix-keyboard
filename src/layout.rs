@@ -1,3 +1,4 @@
+use crate::font::Font;
 use crate::key_style::{self, KeyLook, KeyStyle, KeyStyleSpec};
 use crate::{color_role, shape, spacing};
 use mecha_wayland::prelude::{ColorRole, ThemeMode};
@@ -54,6 +55,9 @@ struct KeyboardSpec {
     padding: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
+    font: Option<String>,
+    #[serde(rename = "font-size")]
+    font_size: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -125,6 +129,8 @@ pub struct KeyboardStyle {
     pub width: Option<f32>,
     /// Window height in logical px.
     pub height: f32,
+    pub font: Font,
+    pub font_size: u16,
 }
 
 impl Default for KeyboardStyle {
@@ -138,10 +144,13 @@ impl Default for KeyboardStyle {
             padding: 4.0,
             width: None,
             height: 280.0,
+            font: Font::Geist,
+            font_size: 16,
         }
     }
 }
 
+// TODO: Have a generic function to check for the positive values
 /// Keep a window dimension only if it's a positive size, warning otherwise.
 fn positive(field: &str, value: Option<f32>) -> Option<f32> {
     value.filter(|&px| {
@@ -172,6 +181,7 @@ impl KeyboardStyle {
     /// Resolve the raw `keyboard:` block; an unrecognised value warns and
     /// keeps its default.
     fn resolve(spec: &KeyboardSpec) -> Self {
+        // TODO: Have it behind a trait
         let default = Self::default();
         let mode = match spec.mode.as_deref() {
             None => default.mode,
@@ -202,6 +212,21 @@ impl KeyboardStyle {
                 }
             },
         };
+        let font = match spec.font.as_deref() {
+            None => default.font,
+            Some(name) => Font::from_name(name).unwrap_or_else(|| {
+                warn!("keyboard font {name:?} is not a bundled font; using the default");
+                default.font
+            }),
+        };
+        let font_size = match spec.font_size {
+            None => default.font_size,
+            Some(0) => {
+                warn!("keyboard font-size must be greater than 0; using the default");
+                default.font_size
+            }
+            Some(px) => px,
+        };
         Self {
             mode,
             background_color,
@@ -211,6 +236,8 @@ impl KeyboardStyle {
             padding: resolve_spacing("padding", spec.padding, default.padding),
             width: positive("width", spec.width),
             height: positive("height", spec.height).unwrap_or(default.height),
+            font,
+            font_size,
         }
     }
 }
@@ -374,6 +401,7 @@ impl View {
                             styles,
                             token,
                             button.and_then(|b| b.key_style.as_deref()),
+                            types_digit(&action),
                         );
                         (face, action, outline, look)
                     })
@@ -461,6 +489,21 @@ fn resolve_face(token: &str, button: Option<&Button>) -> KeyFace {
         .and_then(|b| b.label.clone())
         .unwrap_or_else(|| token.to_string());
     KeyFace::Text(label)
+}
+
+fn types_digit(action: &KeyAction) -> bool {
+    let text = match action {
+        KeyAction::EmitKeysym(ks) => char::from_u32(xkb::keysym_to_utf32(*ks)),
+        KeyAction::EmitText(text) => {
+            let mut chars = text.chars();
+            chars.next().filter(|_| chars.next().is_none())
+        }
+        KeyAction::SetView(_)
+        | KeyAction::ToggleView { .. }
+        | KeyAction::LatchModifier(_)
+        | KeyAction::Unhandled(_) => None,
+    };
+    text.is_some_and(|c| c.is_ascii_digit())
 }
 
 /// Resolve a button token's Key action — what it emits when tapped. Priority:

@@ -8,11 +8,15 @@ keyboard:
   padding: 8
   width: 540
   height: 228
+  font: geist
+  font-size: 20
 
 key_styles:
     normal:   { background: surface-container-high,    foreground: on-surface }
-    function: { background: surface-container-highest, foreground: on-surface }
-    done:     { background: on-secondary-container,    foreground: on-primary-container }
+    number:   { background: surface-container-high,    foreground: on-surface,           font: geist-mono }
+    function: { background: surface-container-highest, foreground: on-surface,           font: geist-mono, font-size: 18 }
+    bottom:   { background: surface-container-high,    foreground: on-surface,           font-size: 16 }
+    done:     { background: on-secondary-container,    foreground: on-primary-container, font-size: 18 }
     latched:  { background: primary,                   foreground: on-primary }
     return:	  { background: primary,                   foreground: on-primary }
 

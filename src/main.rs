@@ -17,6 +17,7 @@
 use mecha_wayland::prelude::*;
 
 mod color_role;
+mod font;
 mod input_method;
 mod key_style;
 mod layout;
@@ -24,6 +25,7 @@ mod shape;
 mod spacing;
 mod virtual_keyboard;
 
+use font::Fonts;
 use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt};
 use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, Keymap};
@@ -121,6 +123,7 @@ struct Key {
 
 struct KeyBuilder {
     font: FontId,
+    font_size: u16,
     key: layout::Key,
     /// Index of the view this key belongs to, for the latched-state check.
     view_index: usize,
@@ -151,7 +154,7 @@ impl Widget for Key {
             me,
             text(b.font, b.key.display_label())
                 .color(s.color(fg_role))
-                .size(16),
+                .size(b.font_size),
         );
 
         let is_latch = matches!(b.key.action, KeyAction::LatchModifier(_));
@@ -186,7 +189,7 @@ struct Keyboard {
 }
 
 struct KeyboardBuilder {
-    font: FontId,
+    fonts: Fonts,
     keymap: Keymap,
 }
 
@@ -243,10 +246,13 @@ impl Widget for Keyboard {
 
                 for key in &row.keys {
                     let is_latch = matches!(&key.action, KeyAction::LatchModifier(_));
+                    // The label keeps its normal font while latched.
+                    let label_style = key.look.style(KeyState::Normal);
                     let key_handle = s.spawn(
                         row_div,
                         KeyBuilder {
-                            font: b.font,
+                            font: b.fonts.id(label_style.font.unwrap_or(style.font)),
+                            font_size: label_style.font_size.unwrap_or(style.font_size),
                             key: key.clone(),
                             view_index: vi,
                             radius: b.keymap.keyboard.radius,
@@ -482,7 +488,7 @@ struct Shell;
 
 struct ShellBuilder {
     root: NodeId,
-    font: FontId,
+    fonts: Fonts,
     keymap: Keymap,
 }
 
@@ -541,7 +547,7 @@ impl Widget for Shell {
         let keyboard = s.spawn(
             win,
             KeyboardBuilder {
-                font: b.font,
+                fonts: b.fonts,
                 keymap: b.keymap,
             },
         );
@@ -654,13 +660,16 @@ fn main() {
     app.add_module(virtual_keyboard::VirtualKeyboardModule);
     app.add_module(input_method::InputMethodModule);
 
-    // Load the font for key labels.
-    let font = app
-        .resource_mut::<Atlas>()
-        .add_font(include_bytes!("../resources/RobotoMono-Regular.ttf"))
-        .expect("RobotoMono loads");
+    let fonts = Fonts::load(&mut app.resource_mut::<Atlas>());
 
     let root = app.root();
-    app.spawn(root, ShellBuilder { root, font, keymap });
+    app.spawn(
+        root,
+        ShellBuilder {
+            root,
+            fonts,
+            keymap,
+        },
+    );
     app.run();
 }
