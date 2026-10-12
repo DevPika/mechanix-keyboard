@@ -346,13 +346,7 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
                 let me = ctx.me();
                 me.keymap.views[me.current_view].name.clone()
             };
-            let target = match current.as_str() {
-                "terminal" => "terminal_upper",
-                "terminal_upper" => "terminal",
-                _ if &current == lock => unlock.as_str(),
-                _ => lock.as_str(),
-            };
-            // let target = if &current == lock { unlock } else { lock };
+            let target = if &current == lock { unlock } else { lock };
             switch_view(ctx, target);
         }
         KeyAction::LatchModifier(_) => {
