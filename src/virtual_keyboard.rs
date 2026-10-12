@@ -1,25 +1,17 @@
 //! `zwp_virtual_keyboard_v1` — the virtual-keyboard-v1 protocol client.
 //!
-//! Rewritten for the new mecha-wayland `app` core: `VirtualKeyboardState` is a
-//! `Resource` (not a field on a monolithic state struct), and the module binds
-//! the `ZwpVirtualKeyboardManagerV1` global conditionally from `Globals` and
-//! creates the `ZwpVirtualKeyboardV1` object once a seat is available.
-//!
-//! The protocol logic — keymap compilation, keysym→keystroke indexing, memfd
-//! keymap file creation, and keycode emission — is preserved from the original
-//! implementation.
+//! `VirtualKeyboardState` is a `Resource`; the module binds the
+//! `ZwpVirtualKeyboardManagerV1` global conditionally from `Globals` and creates
+//! the `ZwpVirtualKeyboardV1` object once a seat is available. It also handles
+//! keymap compilation, keysym→keystroke indexing and memfd keymap file creation.
+//! Keycode emission lives in `vk_emit_keysym` in `main.rs`.
 
 use std::collections::HashMap;
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Instant;
 
-// use app::{App, Module, Resource};
 use rustix::fs::{MemfdFlags, SealFlags};
 use rustix::mm::{MapFlags, ProtFlags};
-// use wayland::{
-//     Globals, Interface, Wayland, WlKeyboardKeymapFormat, WlSeat, ZwpVirtualKeyboardManagerV1,
-//     ZwpVirtualKeyboardV1,
-// };
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Context, Keycode, Keymap, Keysym, MOD_NAME_CTRL, MOD_NAME_SHIFT};
 
@@ -126,7 +118,7 @@ fn init(app: &mut App) {
 
     // Index the modifiers a latched key can arm, mapping the squeekboard name
     // used in the layout to the serialized mask sent over the wire. Control only
-    // this pass — mirrors `layout::resolve_action`'s modifier gate.
+    // this pass — mirrors the modifier gate in `layout::resolve_action`.
     let mut mod_masks = HashMap::new();
     mod_masks.insert(
         "Control".to_string(),
@@ -176,9 +168,8 @@ pub fn keysym_text(ks: Keysym) -> Option<String> {
     Some(ch.to_string())
 }
 
-// Key emission is handled in main.rs's `dispatch` function, which uses
-// `Context`'s resource access (`ctx.resource_mut::<Wayland>()`, etc.) to
-// send key events directly. See `vk_emit_keysym` and `im_commit_text` there.
+// Key emission lives in main.rs: `vk_emit_keysym` sends keycodes through this
+// state's virtual keyboard, and `im_commit_text` is the input-method path.
 
 // ── keymap memfd ───────────────────────────────────────────────────────────
 

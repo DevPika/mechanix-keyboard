@@ -1,20 +1,12 @@
 //! `zwp_input_method_v2` — the input-method-v2 protocol client.
 //!
-//! Rewritten for the new mecha-wayland `app` core: `InputMethodState` is a
-//! `Resource` and the module binds `ZwpInputMethodManagerV2` conditionally from
-//! `Globals`, creates the `ZwpInputMethodV2` object, and registers a system for
-//! `ZwpInputMethodV2Event`.
+//! `InputMethodState` is a `Resource`; the module binds `ZwpInputMethodManagerV2`
+//! conditionally from `Globals`, creates the `ZwpInputMethodV2` object, and
+//! registers a system for `ZwpInputMethodV2Event`.
 //!
-//! The double-buffered state machine (inbound `activate`/`deactivate`/`done` →
-//! applied context; outbound staged `commit_string`/`preedit`/`delete` → flushed
-//! by `commit(serial)`) is preserved from the original implementation.
-
-// use app::{App, Module, Res, ResMut, Resource};
-// use wayland::{
-//     Globals, Interface, Wayland, WlSeat, ZwpInputMethodManagerV2, ZwpInputMethodV2,
-//     ZwpInputMethodV2Event, ZwpTextInputV3ChangeCause, ZwpTextInputV3ContentHint,
-//     ZwpTextInputV3ContentPurpose,
-// };
+//! Inbound state is double-buffered: `activate`/`deactivate`/`done` events fill
+//! a pending context that is applied on `done`. Outbound edits are staged
+//! (`commit_string`/`preedit`/`delete`) and flushed by `commit(serial)`.
 
 use mecha_wayland::prelude::*;
 
@@ -409,7 +401,5 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
 
 // ── outbound edits ────────────────────────────────────────────────────────
 
-// Text commit is handled in main.rs's `im_commit_text` function, which uses
-// `Context`'s resource access to stage the commit string and flush it via
-// Wayland. The `InputMethodState::stage_commit_string` method above provides
-// the staging API.
+// Text commit is done by `im_commit_text` in main.rs, which stages the string
+// via `InputMethodState::stage_commit_string` and sends it over Wayland.

@@ -8,8 +8,7 @@ use std::{env, fs};
 use tracing::{info, warn};
 use xkbcommon::xkb::{self, Keysym};
 
-/// A simple 2D rectangle (replaces the old `utils::Rect` which is no longer
-/// a direct dependency — the new mecha-wayland layout engine uses `Val`/`px`).
+/// A simple 2D rectangle in layout units.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rect {
     pub x: f32,
@@ -516,7 +515,7 @@ fn resolve_action(token: &str, button: Option<&Button>) -> KeyAction {
             None => {}
         }
         // A modifier button latches for the next keystroke. Only Control is wired
-        // this pass (see `virtual_keyboard::toggle_latch` and its `mod_masks`);
+        // this pass (see `toggle_latch` in main.rs and `virtual_keyboard`'s `mod_masks`);
         // every other modifier still defers to `Unhandled`.
         if let Some(m) = b.modifier.as_deref() {
             if m == "Control" {

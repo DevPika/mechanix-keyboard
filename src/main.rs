@@ -106,7 +106,7 @@ fn key_roles(look: KeyLook, kind: KeyKind, state: KeyState) -> (ColorRole, Color
 }
 
 /// The flex-grow weight for a key, derived from its outline width relative to
-/// the default 50px key. This preserves the original layout's key sizing.
+/// the default 50px key.
 fn grow_weight(key: &layout::Key) -> f32 {
     key.rect.w / 50.0
 }
