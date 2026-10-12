@@ -317,12 +317,6 @@ impl Keymap {
         self.views.iter().find(|v| v.name == name)
     }
 
-    /// The index of the view with this name, for storing as the current view.
-    /// Resolved once per switch so per-frame reads stay O(1) array indexing.
-    pub fn index_of(&self, name: &str) -> Option<usize> {
-        self.views.iter().position(|v| v.name == name)
-    }
-
     /// Convert a parsed squeekboard layout into the IR, resolving each key's
     /// face, action, width and look.
     fn from_layout(layout: &Layout) -> Self {

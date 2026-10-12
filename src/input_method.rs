@@ -138,10 +138,13 @@ impl<W: Widget> KeyboardVisibilityExt for Context<'_, W> {
     }
 }
 
-pub struct SwitchView {
-    pub view: &'static str, // view to switch to
+/// `Signal`: a text field gained focus, or changed purpose while focused.
+/// The keyboard picks the view to show from the purpose.
+#[derive(Debug, Clone, Copy)]
+pub struct TextInputFocused {
+    pub purpose: ZwpTextInputV3ContentPurpose,
 }
-impl Event for SwitchView {}
+impl Signal for TextInputFocused {}
 
 /// System: on `KeyboardVisibilityChanged`, broadcast `ApplyKeyboardVisibility`
 /// to the root and every descendant so the `Shell` handler re-applies
@@ -207,12 +210,9 @@ fn init(app: &mut App) {
 /// `done` applies it to `current` and bumps the serial, `unavailable` marks the
 /// object inert.
 fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
-    // store what we need to switch to if we get a content_type event
-    let mut switch_to: Option<&'static str> = None;
-
-    // Visibility is driven from the applied (post-`done`) active state: it
-    // is computed inside the `InputMethodState` borrow and applied after the
-    // guard drops, so `set_keyboard_visibility` can take `&mut App`.
+    // Both are computed inside the `InputMethodState` borrow and acted on
+    // after the guard drops, since signalling needs `&mut App`.
+    let mut focused: Option<TextInputFocused> = None;
     let apply_visible: Option<bool> = {
         let st = &mut app.resource_mut::<InputMethodState>();
         if st.inert {
@@ -240,40 +240,25 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
                 None
             }
             ZwpInputMethodV2Event::Done { .. } => {
-                // Call a SwitchView event if the text box requests us for a
-                // different keyboard
-
-                // TODO: LLM did this boolean logic, probably can be simplified
-                // check if the text box became active
-                let became_active = !st.current.active && st.pending.active;
-                // check if we have changed purpose
-                let purpose_changed = st.current.purpose != st.pending.purpose;
-                // only if we are actually active and we switched view, do the change
-                let should_switch_view = st.pending.active && (became_active || purpose_changed);
-
-                if should_switch_view {
-                    switch_to = Some(match st.pending.purpose {
-                        ZwpTextInputV3ContentPurpose::Terminal => "terminal",
-                        ZwpTextInputV3ContentPurpose::Number
-                        | ZwpTextInputV3ContentPurpose::Digits => "number",
-                        _ => "base",
-                    })
-                }
-
-                // simple copy
-                st.current = st.pending.clone();
+                let next = st.pending.clone();
+                let prev = std::mem::replace(&mut st.current, next);
                 st.serial = st.serial.wrapping_add(1);
-                let active = st.current.active;
-                let serial = st.serial;
+                let now = &st.current;
                 tracing::info!(
-                    active = active,
-                    serial = serial,
-                    should_switch_view,
+                    active = now.active,
+                    serial = st.serial,
                     "input-method: state applied"
                 );
-                // The applied active state drives the surface: show on
-                // activate, hide on deactivate.
-                Some(active)
+
+                if now.active && (!prev.active || prev.purpose != now.purpose) {
+                    focused = Some(TextInputFocused {
+                        purpose: now.purpose,
+                    });
+                }
+                // Only an activate/deactivate moves the surface, so other
+                // `done`s (e.g. surrounding-text updates) don't undo a manual
+                // toggle from the visibility bar.
+                (prev.active != now.active).then_some(now.active)
             }
             ZwpInputMethodV2Event::Unavailable { .. } => {
                 st.inert = true;
@@ -282,12 +267,8 @@ fn on_input_method_event(app: &mut App, event: &ZwpInputMethodV2Event) {
             }
         }
     };
-    if let Some(view) = switch_to {
-        let targets: Vec<NodeId> = app
-            .widgets::<crate::Keyboard>()
-            .map(|(id, _keyboard)| id)
-            .collect();
-        app.emit(SwitchView { view }, targets);
+    if let Some(focused) = focused {
+        app.signal(focused);
     }
     if let Some(visible) = apply_visible {
         app.set_keyboard_visibility(visible);

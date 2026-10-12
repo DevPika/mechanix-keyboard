@@ -30,11 +30,25 @@ mod virtual_keyboard;
 
 use crate::icons::Icons;
 use font::Fonts;
-use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt, SwitchView};
+use input_method::{ApplyKeyboardVisibility, KeyboardVisibilityExt, TextInputFocused};
 use key_style::{KeyLook, KeyState};
 use layout::{KeyAction, KeyFace, Keymap, Modifier};
-/// The keymap view shown when the keyboard first appears.
-pub const INITIAL_VIEW: &str = "base";
+/// The default view: shown when the keyboard first appears and for text
+/// fields with no more specific purpose. Must exist in `layout.yaml`.
+const BASE_VIEW: &str = "base";
+/// The view shown for `terminal`-purpose fields.
+const TERMINAL_VIEW: &str = "terminal";
+/// The view shown for `number`/`digits`-purpose fields.
+const NUMBER_VIEW: &str = "numbers";
+
+/// The view to show for a focused text field's content purpose.
+fn view_for_purpose(purpose: ZwpTextInputV3ContentPurpose) -> &'static str {
+    match purpose {
+        ZwpTextInputV3ContentPurpose::Terminal => TERMINAL_VIEW,
+        ZwpTextInputV3ContentPurpose::Number | ZwpTextInputV3ContentPurpose::Digits => NUMBER_VIEW,
+        _ => BASE_VIEW,
+    }
+}
 
 /// The debug visibility bar's height — also the collapsed surface height.
 ///
@@ -227,15 +241,48 @@ impl Widget for Key {
 /// spawned at build time; non-current views are `Display::Hidden` and toggled
 /// visible on view-switch key taps.
 struct Keyboard {
-    /// Index into the keymap's views of the view currently shown.
+    /// Every view, in keymap order.
+    views: Vec<ViewNode>,
+    /// Index into `views` of the view currently shown.
     current_view: usize,
-    /// One `Handle<Div>` per view; toggled `Display::Hidden`/`Flex` on switch.
-    view_nodes: Vec<Handle<Div>>,
     /// Every latching modifier key across all views, for armed-state repaint on
     /// latch toggle.
     latch_keys: Vec<(Modifier, Handle<Key>)>,
-    /// The keymap (kept for view name lookup on switch).
-    keymap: Keymap,
+    /// Key corner radius, for repainting latch keys.
+    radius: f32,
+}
+
+/// One spawned view: its keymap name and the node toggled
+/// `Display::Hidden`/`Flex` on switch.
+struct ViewNode {
+    name: String,
+    node: Handle<Div>,
+}
+
+impl Keyboard {
+    /// The index of the view with this name, for storing as the current view.
+    /// Resolved once per switch so later reads stay O(1) array indexing.
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.views.iter().position(|v| v.name == name)
+    }
+
+    fn current_view_name(&self) -> &str {
+        &self.views[self.current_view].name
+    }
+}
+
+/// Ask the keyboard to show a named view.
+struct SwitchView {
+    view: &'static str,
+}
+impl Event for SwitchView {}
+
+/// System: a text field gained focus or changed purpose — show the view for
+/// its purpose.
+fn on_text_input_focused(app: &mut App, focused: &TextInputFocused) {
+    let view = view_for_purpose(focused.purpose);
+    let targets: Vec<NodeId> = app.widgets::<Keyboard>().map(|(id, _)| id).collect();
+    app.emit(SwitchView { view }, targets);
 }
 
 struct KeyboardBuilder {
@@ -266,27 +313,32 @@ impl Widget for Keyboard {
             ctx.set_paint(Paint::Quad(Quad::new(bg)));
         });
 
-        let initial_view = b.keymap.index_of(INITIAL_VIEW).unwrap_or(0);
+        let initial_view = b
+            .keymap
+            .views
+            .iter()
+            .position(|v| v.name == BASE_VIEW)
+            .unwrap_or(0);
 
         // ── spawn all views ─────────────────────────────────────────────
-        let mut view_nodes = Vec::new();
+        let mut views = Vec::with_capacity(b.keymap.views.len());
         let mut latch_keys = Vec::new();
 
         for (vi, view) in b.keymap.views.iter().enumerate() {
+            let view_style = LayoutStyle::default()
+                .column()
+                .fill()
+                .gap(px(style.row_gap));
             let view_style = if vi == initial_view {
-                LayoutStyle::default()
-                    .column()
-                    .fill()
-                    .gap(px(style.row_gap))
+                view_style
             } else {
-                LayoutStyle::default()
-                    .column()
-                    .fill()
-                    .gap(px(style.row_gap))
-                    .hidden()
+                view_style.hidden()
             };
             let view_div = s.spawn(me, div().style(view_style));
-            view_nodes.push(view_div);
+            views.push(ViewNode {
+                name: view.name.clone(),
+                node: view_div,
+            });
 
             for row in &view.rows {
                 let row_div = s.spawn(
@@ -303,7 +355,7 @@ impl Widget for Keyboard {
                             font: b.fonts.id(label_style.font.unwrap_or(style.font)),
                             font_size: label_style.font_size.unwrap_or(style.font_size),
                             key: key.clone(),
-                            radius: b.keymap.keyboard.radius,
+                            radius: style.radius,
                         },
                     );
 
@@ -331,10 +383,10 @@ impl Widget for Keyboard {
             switch_view(ctx, event.view);
         });
         Keyboard {
+            views,
             current_view: initial_view,
-            view_nodes,
             latch_keys,
-            keymap: b.keymap,
+            radius: style.radius,
         }
     }
 }
@@ -350,11 +402,11 @@ fn dispatch(ctx: &mut Context<'_, Keyboard>, action: &KeyAction) {
             switch_view(ctx, name);
         }
         KeyAction::ToggleView { lock, unlock } => {
-            let current = {
-                let me = ctx.me();
-                me.keymap.views[me.current_view].name.clone()
+            let target = if ctx.me().current_view_name() == lock {
+                unlock
+            } else {
+                lock
             };
-            let target = if &current == lock { unlock } else { lock };
             switch_view(ctx, target);
         }
         KeyAction::LatchModifier(m) => {
@@ -488,7 +540,7 @@ fn consume_latch(ctx: &mut Context<'_, Keyboard>) {
 /// Switch the current view to the named one, hiding the old and showing the
 /// new via `Display::Hidden` / `Display::Flex`.
 fn switch_view(ctx: &mut Context<'_, Keyboard>, target: &str) {
-    let Some(idx) = ctx.me().keymap.index_of(target) else {
+    let Some(idx) = ctx.me().index_of(target) else {
         tracing::warn!(view = %target, "view switch to unknown view; ignored");
         return;
     };
@@ -498,7 +550,7 @@ fn switch_view(ctx: &mut Context<'_, Keyboard>, target: &str) {
     }
     let (old, new) = {
         let me = ctx.me();
-        (me.view_nodes[old_idx], me.view_nodes[idx])
+        (me.views[old_idx].node, me.views[idx].node)
     };
     ctx.at(old).unwrap().set_display(Display::Hidden);
     ctx.at(new).unwrap().set_display(Display::Flex);
@@ -516,7 +568,7 @@ fn toggle_latch(ctx: &mut Context<'_, Keyboard>, m: Modifier) {
 
 /// Repaint all latching modifier keys to reflect the current latched state.
 fn repaint_latch_keys(ctx: &mut Context<'_, Keyboard>) {
-    let radius = ctx.me().keymap.keyboard.radius;
+    let radius = ctx.me().radius;
 
     let keys = ctx.me().latch_keys.clone();
     for (m, k) in keys {
@@ -716,6 +768,7 @@ fn main() {
     // after the seat is bound.
     app.add_module(virtual_keyboard::VirtualKeyboardModule);
     app.add_module(input_method::InputMethodModule);
+    app.system(on_text_input_focused);
 
     let fonts = Fonts::load(&mut app.resource_mut::<Atlas>());
     let icons = Icons::load(
@@ -734,4 +787,30 @@ fn main() {
         },
     );
     app.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn purpose_picks_view() {
+        use ZwpTextInputV3ContentPurpose as P;
+        assert_eq!(view_for_purpose(P::Terminal), TERMINAL_VIEW);
+        assert_eq!(view_for_purpose(P::Number), NUMBER_VIEW);
+        assert_eq!(view_for_purpose(P::Digits), NUMBER_VIEW);
+        assert_eq!(view_for_purpose(P::Normal), BASE_VIEW);
+        assert_eq!(view_for_purpose(P::Email), BASE_VIEW);
+    }
+
+    #[test]
+    fn auto_switch_views_exist_in_bundled_layout() {
+        let keymap = layout::load_keymap();
+        for view in [BASE_VIEW, TERMINAL_VIEW, NUMBER_VIEW] {
+            assert!(
+                keymap.views.iter().any(|v| v.name == view),
+                "layout.yaml has no `{view}` view"
+            );
+        }
+    }
 }
