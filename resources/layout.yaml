@@ -7,7 +7,7 @@ keyboard:
   row-gap: 12
   padding: 8
   width: 540
-  height: 248
+  height: 252
   font: geist
   font-size: 20
 
