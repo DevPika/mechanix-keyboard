@@ -46,9 +46,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "animation"
+version = "0.1.0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
+dependencies = [
+ "app",
+ "geometry",
+ "layout",
+ "paint",
+ "window",
+]
+
+[[package]]
 name = "app"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "smallvec",
 ]
@@ -68,7 +80,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 [[package]]
 name = "atlas"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "fontdue",
@@ -245,6 +257,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
+name = "dbus"
+version = "0.1.0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
+dependencies = [
+ "app",
+ "ring",
+ "smallvec",
+]
+
+[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -394,7 +416,7 @@ dependencies = [
 [[package]]
 name = "geometry"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 
 [[package]]
 name = "getrandom"
@@ -411,7 +433,7 @@ dependencies = [
 [[package]]
 name = "gles"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "atlas",
  "gbm",
@@ -475,7 +497,7 @@ dependencies = [
 [[package]]
 name = "interactivity"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "geometry",
@@ -594,7 +616,7 @@ dependencies = [
 [[package]]
 name = "layout"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "geometry",
@@ -665,10 +687,12 @@ dependencies = [
 [[package]]
 name = "mecha-wayland"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
+ "animation",
  "app",
  "atlas",
+ "dbus",
  "geometry",
  "gles",
  "interactivity",
@@ -702,7 +726,7 @@ dependencies = [
 [[package]]
 name = "mechanix-widgets"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "atlas",
@@ -955,7 +979,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "paint"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "atlas",
@@ -1009,7 +1033,7 @@ dependencies = [
 [[package]]
 name = "presentation"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "atlas",
@@ -1123,8 +1147,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "render"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
+ "animation",
  "app",
  "geometry",
  "layout",
@@ -1158,7 +1183,7 @@ dependencies = [
 [[package]]
 name = "ring"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "io-uring",
@@ -1548,7 +1573,7 @@ dependencies = [
 [[package]]
 name = "text-input"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "interactivity",
@@ -1559,7 +1584,7 @@ dependencies = [
 [[package]]
 name = "theme"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "geometry",
@@ -1838,7 +1863,7 @@ dependencies = [
 [[package]]
 name = "wayland"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "bitflags 2.13.1",
@@ -1864,7 +1889,7 @@ dependencies = [
 [[package]]
 name = "widgets"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "atlas",
@@ -1887,7 +1912,7 @@ dependencies = [
 [[package]]
 name = "window"
 version = "0.1.0"
-source = "git+https://github.com/DevPika/mecha-wayland.git?branch=layer-resize#c080565da51a5d08c6d6ce84d34ac6c64efdaef0"
+source = "git+https://github.com/mecha-org/mecha-wayland.git?branch=dev#16c505bc3ebaff9afcd48f934acd9d07bde857fb"
 dependencies = [
  "app",
  "geometry",
