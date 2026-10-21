@@ -14,7 +14,7 @@
 
 #![recursion_limit = "1024"]
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use mecha_wayland::prelude::*;
 
@@ -186,6 +186,11 @@ impl Widget for Key {
 
         *s.component_mut::<Paint>(me).unwrap() =
             Paint::Quad(Quad::new(s.color(bg_role)).radius(radius));
+
+        *s.component_mut::<PaintAnimationSettings>(me).unwrap() = PaintAnimationSettings::new(
+            AnimationTime::Duration(Duration::from_millis(150)),
+            Easing::Linear,
+        );
 
         let fg = s.color(fg_role);
         let label = match &b.key.face {
